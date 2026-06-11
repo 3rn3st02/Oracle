@@ -43,12 +43,12 @@ embeddings/
 Thumbs.db
 
 # -------- RAG DATA --------
-data/books/
-data/processed/
-data/*.json
- 
-# Keep folder structure
+data/books/*
+data/processed/*
 !data/.gitkeep
+!data/books/.gitkeep
+!data/processed/.gitkeep
+!data/books_metadata.json
  
 # -------- TEST CACHE --------
 .pytest_cache/
