@@ -1,0 +1,107 @@
+
+# =========================================================
+# ORACULO - Monorepo (Android + Python backend + docs)
+# =========================================================
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Secrets / config local
+.env
+.env.*
+*.secret
+secrets.json
+secret.json
+config.local.*
+credentials.json
+
+# Editores
+.idea/
+.vscode/
+*.iml
+
+# Android / Gradle
+.gradle/
+**/.gradle/
+build/
+**/build/
+local.properties
+**/local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+output.json
+*.jks
+*.keystore
+*.pem
+bin/
+gen/
+hs_err_pid*
+
+android/**/build/
+android/**/.gradle/
+android/**/local.properties
+android/**/.idea/
+android/**/captures/
+android/**/.externalNativeBuild/
+android/**/.cxx/
+
+# Python / backend
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.Python
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.dmypy.json
+dmypy.json
+.ipynb_checkpoints/
+*.pid
+
+backend/**/__pycache__/
+backend/**/.venv/
+backend/**/venv/
+backend/**/.env
+backend/**/.pytest_cache/
+backend/**/.mypy_cache/
+backend/**/dist/
+backend/**/build/
+
+# Temporales
+*.tmp
+*.swp
+*.swo
