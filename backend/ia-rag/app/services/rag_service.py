@@ -28,8 +28,8 @@ class RagService:
 
     def strip_front_matter(self, text: str) -> str:
         """
-        Intenta saltar portada e índice buscando la segunda aparición de
-        '1. Introducción', que suele marcar el inicio real del contenido.
+        Intenta saltarse portada e índice buscando la segunda aparición de
+        '1. Introducción', que normalmente marca el comienzo real del contenido.
         """
         markers = ["1. Introducción", "1. Introduccion"]
 
@@ -76,13 +76,37 @@ class RagService:
 
         return chunks
 
+    def split_into_sections(self, text: str) -> list:
+        text = self.normalize_text(text)
+
+        if not text:
+            return []
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        sections = []
+        current = []
+
+        heading_pattern = re.compile(r"^\d+(\.\d+)?\.\s+")
+
+        for line in lines:
+            if heading_pattern.match(line) and current:
+                sections.append(" ".join(current).strip())
+                current = [line]
+            else:
+                current.append(line)
+
+        if current:
+            sections.append(" ".join(current).strip())
+
+        return sections
+
     def extract_keywords(self, question: str) -> list:
         stopwords = {
             "que", "qué", "dice", "libro", "antiguo", "nuevo", "sobre",
             "del", "los", "las", "una", "uno", "unos", "unas", "para",
             "como", "cómo", "cual", "cuál", "cuáles", "cuando", "donde",
             "el", "la", "de", "en", "por", "con", "sin", "al", "se",
-            "es", "son", "un", "cuales", "cuál"
+            "es", "son", "un", "cuales"
         }
 
         words = re.findall(r"\w+", question.lower())
@@ -188,7 +212,7 @@ class RagService:
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             chunks = self.split_into_chunks(text)
 
-            # Reglas exactas prioritarias para conceptos que ya has probado
+            # Reglas exactas prioritarias
             if "circuito eléctrico" in exact_question or "circuito electrico" in exact_question:
                 chunk = self.extract_window_from_lines(
                     lines,
@@ -208,8 +232,13 @@ class RagService:
                 if chunk:
                     return {"chunk": chunk, "book": book}
 
+            # PARCHE: Von Neumann con ventana amplia para que no se corte en "partes:"
             if "von neumann" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["von neumann"], window=12)
+                chunk = self.extract_window_from_lines(
+                    lines,
+                    ["arquitectura de von neumann", "von neumann"],
+                    window=28
+                )
                 if chunk and "índice" not in chunk.lower():
                     return {"chunk": chunk, "book": book}
 
@@ -223,8 +252,8 @@ class RagService:
                     return {"chunk": chunk, "book": book}
 
             if "placa base" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["placa base"], window=8)
-                if chunk and "caso práctico inicial" not in chunk.lower() and "lorena trabaja" not in chunk.lower():
+                chunk = self.extract_window_from_lines(lines, ["placa base"], window=10)
+                if chunk and "caso práctico inicial" not in chunk.lower():
                     return {"chunk": chunk, "book": book}
 
             # Búsqueda general por puntuación
@@ -241,7 +270,6 @@ class RagService:
                         "book": book
                     }
 
-        # Si la coincidencia es demasiado mala, se considera que no hay contexto útil
         if best_score < 2:
             return None
 
@@ -259,7 +287,7 @@ class RagService:
         # Limpieza visual mínima
         chunk = chunk.replace("= ", "")
         chunk = re.sub(r"\s+", " ", chunk).strip()
-        chunk = re.sub(r"^\d+\.\s*", "", chunk)  # quita numeración inicial tipo "2."
+        chunk = re.sub(r"^\d+\.\s*", "", chunk)
         chunk = chunk.strip(" .:")
 
         if not chunk:
