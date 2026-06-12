@@ -56,3 +56,19 @@ def test_ask_invalid_request_returns_400():
     assert data["status"] == "error"
     assert data["answer"] is None
     assert data["error"]["code"] == "VALIDATION_ERROR"
+
+def test_ask_unknown_topic_returns_no_relevant_information():
+    payload = {
+        "question": "¿Qué es un SSD?",
+        "user_id": "test-user",
+        "context": []
+    }
+
+    response = client.post("/ask", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["status"] == "ok"
+    assert data["sources"] == []
+    assert "No he encontrado todavía suficiente información relevante" in data["answer"]

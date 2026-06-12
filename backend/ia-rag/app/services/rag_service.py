@@ -56,7 +56,7 @@ class RagService:
 
     def split_into_sections(self, text: str) -> list:
         """
-        Divide el libro en secciones usando títulos como:
+        Divide el libro en secciones usando títulos tipo:
         1. Introducción
         2. Arquitectura de Von Neumann
         3. Unidades funcionales de un ordenador
@@ -91,7 +91,7 @@ class RagService:
             "del", "los", "las", "una", "uno", "unos", "unas", "para",
             "como", "cómo", "cual", "cuál", "cuáles", "cuando", "donde",
             "el", "la", "de", "en", "por", "con", "sin", "al", "se",
-            "es", "son", "un", "cuales"
+            "es", "son", "un", "cuales", "cuál"
         }
 
         words = re.findall(r"\w+", question.lower())
@@ -134,7 +134,14 @@ class RagService:
             "situación de partida",
             "pctown",
             "lorena trabaja",
-            "descuento a los clientes"
+            "descuento a los clientes",
+            "en resumen",
+            "¿qué otras tendencias",
+            "la placa base vamos a conocer",
+            "jerarquía de memorias",
+            "bus de control",
+            "bus de direcciones",
+            "bus de datos"
         ]
 
         if len(section.strip()) < 80:
@@ -155,14 +162,6 @@ class RagService:
         for keyword in keywords:
             if keyword in section_lower:
                 score += 2
-
-        important_terms = [
-            "montaje", "mantenimiento", "equipos", "sistemas",
-            "circuito", "eléctrico", "serie", "paralelo",
-            "arquitectura", "neumann", "funcionales",
-            "ordenador", "ssd", "placa", "base"
-        ]
-        score += sum(1 for term in important_terms if term in section_lower)
 
         return score
 
@@ -215,7 +214,7 @@ class RagService:
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             sections = self.split_into_sections(text)
 
-            # Reglas útiles para conceptos ya probados
+            # Reglas útiles para conceptos que ya has probado
             if "circuito eléctrico" in exact_question or "circuito electrico" in exact_question:
                 chunk = self.extract_window_from_lines(
                     lines,
@@ -284,7 +283,14 @@ class RagService:
                         "book": book
                     }
 
-        if best_score < 2:
+        # v0.2.3 -> si la coincidencia es floja, no inventar
+        if not best_match:
+            return None
+
+        best_chunk_lower = best_match["chunk"].lower()
+        matched_keywords = [kw for kw in keywords if kw in best_chunk_lower]
+
+        if best_score < 4 or len(matched_keywords) == 0:
             return None
 
         return best_match
