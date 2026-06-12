@@ -28,8 +28,9 @@ class RagService:
 
     def strip_front_matter(self, text: str) -> str:
         """
-        Intenta saltarse portada e índice buscando la segunda aparición de
-        '1. Introducción', que normalmente marca el comienzo real del contenido.
+        Intenta saltarse portada e índice buscando la segunda aparición de:
+        - 1. Introducción
+        - 1. Introduccion
         """
         markers = ["1. Introducción", "1. Introduccion"]
 
@@ -53,30 +54,14 @@ class RagService:
         text = re.sub(r"\n{2,}", "\n\n", text)
         return text.strip()
 
-    def split_into_chunks(self, text: str, chunk_size: int = 1000) -> list:
-        text = self.normalize_text(text)
-
-        if not text:
-            return []
-
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-        chunks = []
-        current = ""
-
-        for paragraph in paragraphs:
-            if len(current) + len(paragraph) + 2 <= chunk_size:
-                current = f"{current}\n\n{paragraph}".strip()
-            else:
-                if current:
-                    chunks.append(current)
-                current = paragraph
-
-        if current:
-            chunks.append(current)
-
-        return chunks
-
     def split_into_sections(self, text: str) -> list:
+        """
+        Divide el libro en secciones usando títulos como:
+        1. Introducción
+        2. Arquitectura de Von Neumann
+        3. Unidades funcionales de un ordenador
+        4.1. Fases de búsqueda y de ejecución
+        """
         text = self.normalize_text(text)
 
         if not text:
@@ -113,10 +98,11 @@ class RagService:
         keywords = [word for word in words if len(word) > 3 and word not in stopwords]
 
         extras = [
-            "montaje", "mantenimiento", "equipos", "sistemas", "circuito",
-            "eléctrico", "electrico", "serie", "paralelo", "arquitectura",
-            "neumann", "unidades", "funcionales", "ordenador", "ssd",
-            "placa", "base", "memoria", "puertos", "audio", "vídeo", "video"
+            "montaje", "mantenimiento", "equipos", "sistemas",
+            "circuito", "eléctrico", "electrico", "serie", "paralelo",
+            "arquitectura", "neumann", "unidades", "funcionales",
+            "ordenador", "ssd", "placa", "base", "memoria",
+            "puertos", "audio", "video", "vídeo"
         ]
 
         question_lower = question.lower()
@@ -133,8 +119,8 @@ class RagService:
 
         return unique_keywords
 
-    def is_noise_chunk(self, chunk: str) -> bool:
-        chunk_lower = chunk.lower()
+    def is_noise_section(self, section: str) -> bool:
+        section_lower = section.lower()
 
         noise_patterns = [
             "índice",
@@ -151,31 +137,32 @@ class RagService:
             "descuento a los clientes"
         ]
 
-        if len(chunk.strip()) < 80:
+        if len(section.strip()) < 80:
             return True
 
-        if sum(char.isalpha() for char in chunk) < 40:
+        if sum(char.isalpha() for char in section) < 40:
             return True
 
-        if any(pattern in chunk_lower for pattern in noise_patterns):
+        if any(pattern in section_lower for pattern in noise_patterns):
             return True
 
         return False
 
-    def score_chunk(self, keywords: list, chunk: str) -> int:
-        chunk_lower = chunk.lower()
+    def score_section(self, keywords: list, section: str) -> int:
+        section_lower = section.lower()
         score = 0
 
         for keyword in keywords:
-            if keyword in chunk_lower:
+            if keyword in section_lower:
                 score += 2
 
         important_terms = [
-            "montaje", "mantenimiento", "equipos", "sistemas", "circuito",
-            "eléctrico", "serie", "paralelo", "arquitectura", "neumann",
-            "funcionales", "ordenador", "ssd", "placa", "base"
+            "montaje", "mantenimiento", "equipos", "sistemas",
+            "circuito", "eléctrico", "serie", "paralelo",
+            "arquitectura", "neumann", "funcionales",
+            "ordenador", "ssd", "placa", "base"
         ]
-        score += sum(1 for term in important_terms if term in chunk_lower)
+        score += sum(1 for term in important_terms if term in section_lower)
 
         return score
 
@@ -195,6 +182,22 @@ class RagService:
 
         return ""
 
+    def remove_noise_markers(self, text: str) -> str:
+        text_lower = text.lower()
+
+        for marker in [
+            "caso práctico inicial",
+            "caso practico inicial",
+            "práctica profesional",
+            "ficha de trabajo",
+            "situación de partida"
+        ]:
+            pos = text_lower.find(marker)
+            if pos != -1:
+                return text[:pos].strip()
+
+        return text
+
     def retrieve_context(self, question: str) -> dict | None:
         books = self.load_books_metadata()
         keywords = self.extract_keywords(question)
@@ -210,9 +213,9 @@ class RagService:
 
             text = self.normalize_text(text)
             lines = [line.strip() for line in text.splitlines() if line.strip()]
-            chunks = self.split_into_chunks(text)
+            sections = self.split_into_sections(text)
 
-            # Reglas exactas prioritarias
+            # Reglas útiles para conceptos ya probados
             if "circuito eléctrico" in exact_question or "circuito electrico" in exact_question:
                 chunk = self.extract_window_from_lines(
                     lines,
@@ -223,16 +226,23 @@ class RagService:
                     return {"chunk": chunk, "book": book}
 
             if "circuito en serie" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["circuito en serie"], window=3)
+                chunk = self.extract_window_from_lines(
+                    lines,
+                    ["circuito en serie"],
+                    window=3
+                )
                 if chunk:
                     return {"chunk": chunk, "book": book}
 
             if "circuito en paralelo" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["circuito en paralelo"], window=3)
+                chunk = self.extract_window_from_lines(
+                    lines,
+                    ["circuito en paralelo"],
+                    window=3
+                )
                 if chunk:
                     return {"chunk": chunk, "book": book}
 
-            # PARCHE: Von Neumann con ventana amplia para que no se corte en "partes:"
             if "von neumann" in exact_question:
                 chunk = self.extract_window_from_lines(
                     lines,
@@ -252,21 +262,25 @@ class RagService:
                     return {"chunk": chunk, "book": book}
 
             if "placa base" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["placa base"], window=10)
+                chunk = self.extract_window_from_lines(
+                    lines,
+                    ["placa base"],
+                    window=10
+                )
                 if chunk and "caso práctico inicial" not in chunk.lower():
                     return {"chunk": chunk, "book": book}
 
-            # Búsqueda general por puntuación
-            for chunk in chunks:
-                if self.is_noise_chunk(chunk):
+            # Búsqueda general por secciones
+            for section in sections:
+                if self.is_noise_section(section):
                     continue
 
-                score = self.score_chunk(keywords, chunk)
+                score = self.score_section(keywords, section)
 
                 if score > best_score:
                     best_score = score
                     best_match = {
-                        "chunk": chunk,
+                        "chunk": section,
                         "book": book
                     }
 
@@ -283,11 +297,12 @@ class RagService:
             )
 
         chunk = match["chunk"].strip()
+        chunk = self.remove_noise_markers(chunk)
 
-        # Limpieza visual mínima
+        # Limpieza mínima visual
         chunk = chunk.replace("= ", "")
         chunk = re.sub(r"\s+", " ", chunk).strip()
-        chunk = re.sub(r"^\d+\.\s*", "", chunk)
+        chunk = re.sub(r"^\d+(\.\d+)?\.\s*", "", chunk)
         chunk = chunk.strip(" .:")
 
         if not chunk:
@@ -295,6 +310,9 @@ class RagService:
                 f"No he encontrado todavía suficiente información relevante en los libros "
                 f"para responder con claridad a la pregunta: '{question}'."
             )
+
+        if chunk.endswith("."):
+            return chunk
 
         return f"{chunk}."
 
