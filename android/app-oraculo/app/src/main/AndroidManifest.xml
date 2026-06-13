@@ -9,9 +9,9 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@drawable/cortana_microsoft"
-        android:label="App-Oracle"
-        android:roundIcon="@drawable/cortana_microsoft"
+        android:icon="@drawable/ic_oracle_foreground"
+        android:label="Proyect-Oracle"
+        android:roundIcon="@drawable/ic_oracle_foreground"
         android:supportsRtl="true"
         android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 

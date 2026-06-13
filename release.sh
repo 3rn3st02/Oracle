@@ -19,7 +19,7 @@ git checkout android-client || exit
 # 2. Guardar cambios
 echo "💾 Guardando cambios..."
 git add .
-git commit -m "release(android): preparación APK V$VERSION" || true
+git commit -m "release(android): build APK V$VERSION" || echo "Sin cambios para commit"
 
 # 3. Push
 git push origin android-client
