@@ -56,7 +56,7 @@ class RagService:
 
     def split_into_sections(self, text: str) -> list:
         """
-        Divide el libro en secciones usando títulos tipo:
+        Divide el libro en secciones usando títulos como:
         1. Introducción
         2. Arquitectura de Von Neumann
         3. Unidades funcionales de un ordenador
@@ -214,7 +214,7 @@ class RagService:
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             sections = self.split_into_sections(text)
 
-            # Reglas útiles para conceptos que ya has probado
+            # Reglas útiles para conceptos ya probados
             if "circuito eléctrico" in exact_question or "circuito electrico" in exact_question:
                 chunk = self.extract_window_from_lines(
                     lines,
@@ -251,23 +251,35 @@ class RagService:
                 if chunk and "índice" not in chunk.lower():
                     return {"chunk": chunk, "book": book}
 
+            # v0.2.4 -> unidades funcionales por secciones, evitando mezclas
             if "unidades funcionales" in exact_question:
-                chunk = self.extract_window_from_lines(
-                    lines,
-                    ["unidades funcionales de un ordenador", "unidades funcionales"],
-                    window=12
-                )
-                if chunk and "índice" not in chunk.lower():
-                    return {"chunk": chunk, "book": book}
+                for section in sections:
+                    section_lower = section.lower()
+                    if (
+                        (
+                            "unidades funcionales de un ordenador" in section_lower
+                            or "unidades funcionales" in section_lower
+                        )
+                        and "índice" not in section_lower
+                        and "en resumen" not in section_lower
+                        and "arquitectura de von neumann" not in section_lower
+                        and "¿" not in section
+                    ):
+                        return {"chunk": section, "book": book}
 
+            # v0.2.4 -> placa base por secciones, evitando casos laterales
             if "placa base" in exact_question:
-                chunk = self.extract_window_from_lines(
-                    lines,
-                    ["placa base"],
-                    window=10
-                )
-                if chunk and "caso práctico inicial" not in chunk.lower():
-                    return {"chunk": chunk, "book": book}
+                for section in sections:
+                    section_lower = section.lower()
+                    if (
+                        "placa base" in section_lower
+                        and "caso práctico inicial" not in section_lower
+                        and "caso practico inicial" not in section_lower
+                        and "en resumen" not in section_lower
+                        and "antecedentes de los factores de forma" not in section_lower
+                        and "¿" not in section
+                    ):
+                        return {"chunk": section, "book": book}
 
             # Búsqueda general por secciones
             for section in sections:
