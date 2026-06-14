@@ -33,7 +33,7 @@ class OraculoRepository {
             val response = RetrofitClient.api.ask(
                 AskRequest(
                     question = question,
-                    user_id = "android-user",
+                    user_id = "android-test",
                     context = emptyList()
                 )
             )
@@ -42,9 +42,17 @@ class OraculoRepository {
                 val body = response.body()
 
                 if (body?.status == "ok") {
-                    Result.success(body.answer ?: "Respuesta vacía")
+
+                    val sourcesText = body.sources.joinToString("\n") { sourceItem ->
+                        "- ${sourceItem.source}"
+                    }
+
+                    Result.success(
+                        (body.answer ?: "Respuesta vacía") + "\n\nFuentes:\n" + sourcesText
+                    )
+
                 } else {
-                    Result.failure(Exception("Backend error: ${body?.error}"))
+                    Result.failure(Exception("Backend error"))
                 }
 
             } else {
