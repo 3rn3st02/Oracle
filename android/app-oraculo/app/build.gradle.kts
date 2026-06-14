@@ -15,24 +15,22 @@ android {
         minSdk = 30
         targetSdk = 35
 
-        versionCode = 3
-        versionName = "1.1.2"
+        versionCode = 4
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
-
         debug {
             buildConfigField(
                 "String",
                 "BASE_URL",
-                "\"https://dev-oraculo.example.com/\""
+                "\"http://127.0.0.1:8000/\""
             )
         }
 
         release {
-
             isMinifyEnabled = false
 
             buildConfigField(

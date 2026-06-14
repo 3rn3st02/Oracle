@@ -13,6 +13,7 @@
         android:label="Proyect-Oracle"
         android:roundIcon="@drawable/ic_oracle_foreground"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 
         <activity
