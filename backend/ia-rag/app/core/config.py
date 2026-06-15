@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "oraculo-ia-rag"
-    app_version: str = "0.2.3"
+    app_version: str = "0.2.4"
     debug: bool = False
 
     api_prefix: str = ""
