@@ -38,7 +38,6 @@ Lo anterior resumido:
   -uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Conectar Android (ADB reverse)
-
-adb reverse tcp:8000 tcp:8000
-adb reverse --list
-(respuesta esperada: UsbFfs tcp:8000 tcp:8000)
+   -adb reverse tcp:8000 tcp:8000
+   -adb reverse --list
+      (respuesta esperada: UsbFfs tcp:8000 tcp:8000)
