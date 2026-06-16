@@ -1,3 +1,4 @@
+import os
 import time
 import uuid
 
@@ -20,6 +21,39 @@ def health() -> HealthResponse:
         version=settings.app_version,
         initialized=rag_service.is_initialized()
     )
+
+
+@router.get("/debug")
+def debug():
+    svc = rag_service
+    processed = svc.processed_path
+    metadata = svc.metadata_path
+
+    books = svc.load_books_metadata()
+    files_in_processed = list(processed.iterdir()) if processed.exists() else []
+
+    book_info = []
+    for book in books:
+        text = svc.load_book_text(book["filename"])
+        sections = svc.split_into_sections(text) if text else []
+        book_info.append({
+            "filename": book["filename"],
+            "file_exists": (processed / book["filename"]).exists(),
+            "chars_loaded": len(text),
+            "sections": len(sections),
+        })
+
+    return {
+        "cwd": os.getcwd(),
+        "base_path": str(svc.base_path),
+        "processed_path": str(processed),
+        "processed_exists": processed.exists(),
+        "metadata_path": str(metadata),
+        "metadata_exists": metadata.exists(),
+        "files_in_processed": [f.name for f in files_in_processed],
+        "books_metadata": books,
+        "books_detail": book_info,
+    }
 
 
 @router.post("/ask", response_model=AskResponse)
