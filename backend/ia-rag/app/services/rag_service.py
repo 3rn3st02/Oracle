@@ -56,7 +56,7 @@ class RagService:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         sections = []
         current = []
-        heading_pattern = re.compile(r"^\d+(\.\d+)*\.\s+")
+        heading_pattern = re.compile(r"^\d+(\.\d+)*\.?\s+\S")
 
         for line in lines:
             if heading_pattern.match(line) and current:
