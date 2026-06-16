@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 from groq import Groq
@@ -70,16 +71,21 @@ class RagService:
 
         return sections
 
+    @staticmethod
+    def _to_ascii(text: str) -> str:
+        return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+
     def extract_keywords(self, question: str) -> list:
         stopwords = {
-            "que", "qué", "dice", "libro", "antiguo", "nuevo", "sobre",
+            "que", "que", "dice", "libro", "antiguo", "nuevo", "sobre",
             "del", "los", "las", "una", "uno", "unos", "unas", "para",
-            "como", "cómo", "cual", "cuál", "cuáles", "cuando", "donde",
+            "como", "como", "cual", "cual", "cuales", "cuando", "donde",
             "el", "la", "de", "en", "por", "con", "sin", "al", "se",
-            "es", "son", "un", "cuales", "cuál"
+            "es", "son", "un", "cuales"
         }
-        words = re.findall(r"\w+", question.lower())
-        keywords = [w for w in words if len(w) > 3 and w not in stopwords]
+        normalized = self._to_ascii(question.lower())
+        words = re.findall(r"\w+", normalized)
+        keywords = [w for w in words if len(w) >= 3 and w not in stopwords]
 
         seen = set()
         unique = []
@@ -97,8 +103,8 @@ class RagService:
         return False
 
     def score_section(self, keywords: list, section: str) -> int:
-        section_lower = section.lower()
-        return sum(2 for kw in keywords if kw in section_lower)
+        section_ascii = self._to_ascii(section.lower())
+        return sum(2 for kw in keywords if kw in section_ascii)
 
     def remove_noise_markers(self, text: str) -> str:
         text_lower = text.lower()
@@ -143,7 +149,7 @@ class RagService:
         best_chunk_lower = best_match["chunk"].lower()
         matched_keywords = [kw for kw in keywords if kw in best_chunk_lower]
 
-        if best_score < 4 or len(matched_keywords) == 0:
+        if best_score < 2 or len(matched_keywords) == 0:
             return None
 
         return best_match
