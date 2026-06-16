@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+ 
+# Virtual environments
+venv/
+.venv/
+env/
+ 
+# Environment variables
+.env
+.env.*
+ 
+# Logs
+*.log
+ 
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+ 
+# Vector stores / embeddings
+chroma/
+faiss/
+vectorstore/
+embeddings/
+ 
+# Models
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+ 
+# IDE
+.idea/
+.vscode/
+ 
+# OS
+.DS_Store
+Thumbs.db
+
+# -------- RAG DATA --------
+data/books/*
+data/processed/*
+!data/.gitkeep
+!data/books/.gitkeep
+!data/processed/.gitkeep
+!data/books_metadata.json
+ 
+# -------- TEST CACHE --------
+.pytest_cache/
+
