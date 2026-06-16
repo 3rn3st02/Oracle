@@ -2,10 +2,40 @@
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#070B14">
+    android:background="#070B14"
+    tools:context=".MainActivity">
+
+
+    <!--
+            Fondo animado nativo.
+            Va como primer hijo del ConstraintLayout para quedar detrás de todo el contenido.
+            La clase está en:
+            app/src/main/java/com/oraculo/app/ui/views/NightChatBackgroundView.kt
+
+            Importante:
+            - No recibe clicks.
+            - No reemplaza tu UI.
+            - Solo dibuja el fondo.
+        -->
+    <com.oraculo.app.ui.views.NightChatBackgroundView
+        android:id="@+id/nightChatBackground"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="visible"
+        tools:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!--
+        Contenedor principal de tu interfaz.
+        Este bloque queda por encima del fondo animado.
+    -->
 
     <LinearLayout
         android:id="@+id/contentContainer"
@@ -21,7 +51,8 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <TextView
+
+    <TextView
             android:id="@+id/textTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -65,20 +96,56 @@
             android:textColor="#FFFFFF"
             android:textColorHint="#8190B5" />
 
-        <Button
+
+        <!--
+           Botón principal glass con borde RGB.
+
+           Puntos clave:
+           - android:background usa nuestro drawable personalizado.
+           - android:backgroundTint="@null" evita que el tema pinte encima del drawable.
+           - app:backgroundTint="@null" refuerza lo mismo para AppCompat.
+           - android:elevation agrega sombra real.
+           - stateListAnimator="@null" evita cambios raros de elevación al tocar.
+       -->
+        <androidx.appcompat.widget.AppCompatButton
             android:id="@+id/buttonAsk"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="54dp"
             android:layout_marginTop="14dp"
+            android:background="@drawable/bg_button_glass_rgb"
+            android:backgroundTint="@null"
+            app:backgroundTint="@null"
+            android:elevation="12dp"
+            android:fontFamily="sans"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:stateListAnimator="@null"
             android:text="Enviar pregunta"
-            android:textAllCaps="false" />
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
 
+
+        <!--
+     Indicador de carga.
+
+     Usamos android:indeterminateDrawable="@drawable/progress_oracle_static"
+     para evitar un error del Preview de Android Studio con el drawable animado
+     por defecto del ProgressBar.
+ -->
         <ProgressBar
             android:id="@+id/progressBar"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="20dp"
+            android:indeterminate="true"
+            android:indeterminateDrawable="@drawable/progress_oracle_static"
             android:visibility="gone" />
 
         <TextView

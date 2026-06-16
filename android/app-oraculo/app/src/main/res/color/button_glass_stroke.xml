@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Color selector para el borde del botón glass.
+
+    El borde ayuda a que el botón se vea como una superficie de cristal
+    encima del fondo animado.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:state_enabled="false"
+        android:color="#33FFFFFF" />
+
+    <item
+        android:state_pressed="true"
+        android:color="#B8FFFFFF" />
+
+    <item
+        android:state_focused="true"
+        android:color="#99FFFFFF" />
+
+    <item android:color="#99FFFFFF" />
+
+</selector>

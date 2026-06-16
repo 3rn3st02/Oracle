@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Drawable simple para el ProgressBar.
+
+    Motivo:
+    Android Studio Preview puede fallar al renderizar el drawable animado
+    por defecto del ProgressBar. Este drawable evita ese problema en Preview
+    y mantiene un indicador visual simple cuando se muestra la carga.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+
+    <size
+        android:width="36dp"
+        android:height="36dp" />
+
+    <solid android:color="#57A6FF" />
+
+</shape>

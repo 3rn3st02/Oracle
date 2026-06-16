@@ -14,17 +14,21 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.oraculo.app.data.repository.OraculoRepository
+import com.oraculo.app.ui.views.NightChatBackgroundView
 import kotlinx.coroutines.launch
+
 
 class MainActivity : AppCompatActivity() {
 
     private val repository = OraculoRepository()
 
+    private lateinit var nightChatBackground: NightChatBackgroundView
     private lateinit var textBackendStatus: TextView
     private lateinit var editQuestion: EditText
     private lateinit var buttonAsk: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var textQuestion: TextView
+
     private lateinit var textAnswer: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,29 +46,63 @@ class MainActivity : AppCompatActivity() {
         Log.d("ORACULO_API", "BASE_URL actual: ${BuildConfig.BASE_URL}")
     }
 
+    override fun onResume() {
+        super.onResume()
+
+        // Reanuda el fondo animado cuando la Activity vuelve a primer plano.
+        nightChatBackground.resumeAnimation()
+    }
+
+    override fun onPause() {
+        // Pausa el fondo animado cuando la Activity pasa a segundo plano.
+        // Esto evita consumo innecesario de CPU/GPU.
+        nightChatBackground.pauseAnimation()
+
+        super.onPause()
+    }
+
     private fun bindViews() {
+
+// Fondo animado nativo agregado en activity_main.xml.
+        nightChatBackground = findViewById(R.id.nightChatBackground)
+
         textBackendStatus = findViewById(R.id.textBackendStatus)
         editQuestion = findViewById(R.id.editQuestion)
         buttonAsk = findViewById(R.id.buttonAsk)
         progressBar = findViewById(R.id.progressBar)
         textQuestion = findViewById(R.id.textQuestion)
         textAnswer = findViewById(R.id.textAnswer)
+
+
     }
 
+
     private fun setupInsets() {
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { view, insets ->
+        /*
+         * Aplicamos los insets al contenedor de contenido, no al layout raíz.
+         *
+         * Motivo:
+         * - El layout raíz "main" contiene también el fondo animado.
+         * - Si ponemos padding al layout raíz, el fondo puede quedar recortado.
+         * - Al aplicar padding solo a "contentContainer", el fondo ocupa toda la pantalla
+         *   y el contenido respeta barras de sistema/notch/navigation bar.
+         */
+        val contentContainer = findViewById<View>(R.id.contentContainer)
+
+        ViewCompat.setOnApplyWindowInsetsListener(contentContainer) { view, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
 
             view.setPadding(
-                systemBars.left,
-                systemBars.top,
-                systemBars.right,
-                systemBars.bottom
+                systemBars.left + 24.dpToPx(),
+                systemBars.top + 28.dpToPx(),
+                systemBars.right + 24.dpToPx(),
+                systemBars.bottom + 24.dpToPx()
             )
 
             insets
         }
     }
+
 
     private fun setupListeners() {
         buttonAsk.setOnClickListener {
@@ -137,4 +175,18 @@ class MainActivity : AppCompatActivity() {
         buttonAsk.isEnabled = !isLoading
         editQuestion.isEnabled = !isLoading
     }
+
+    /**
+     * Convierte dp a píxeles usando la densidad actual de la pantalla.
+     *
+     * Se usa para mantener los paddings originales del XML:
+     * - 24dp horizontal
+     * - 28dp superior
+     * - 24dp inferior
+     */
+    private fun Int.dpToPx(): Int {
+        return (this * resources.displayMetrics.density).toInt()
+    }
+
+
 }

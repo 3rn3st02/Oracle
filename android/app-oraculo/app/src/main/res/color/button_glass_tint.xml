@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Color selector para el fondo tipo glass del botón.
+
+    - Estado normal: blanco/azul translúcido.
+    - Estado presionado: un poco más claro para dar sensación táctil.
+    - Estado deshabilitado: más apagado.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:state_enabled="false"
+        android:color="#1AFFFFFF" />
+
+    <item
+        android:state_pressed="true"
+        android:color="#1AFFFFFF" />
+
+    <item
+        android:state_focused="true"
+        android:color="#1AFFFFFF" />
+
+    <item android:color="#1AFFFFFF" />
+
+</selector>

@@ -15,8 +15,8 @@ android {
         minSdk = 30
         targetSdk = 35
 
-        versionCode = 5
-        versionName = "1.2.1"
+        versionCode = 6
+        versionName = "1.2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -26,7 +26,7 @@ android {
             buildConfigField(
                 "String",
                 "BASE_URL",
-                "\"http://127.0.0.1:8000/\""
+                "\"http://192.168.30.61:8000/\""
             )
         }
 
