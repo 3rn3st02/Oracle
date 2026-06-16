@@ -2,7 +2,7 @@ services:
   ia-rag:
     build: .
     ports:
-      - "22191:8000"
+      - "8000:8000"
     env_file:
       - .env
     environment:
