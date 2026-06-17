@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Botón glass con borde RGB degradado.
+
+    Esta versión mantiene el efecto glass porque:
+    - La capa interna es muy translúcida.
+    - El borde RGB queda visible.
+    - El brillo superior simula reflejo de cristal.
+    - La sombra es suave y no tapa el fondo.
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#30FFFFFF">
+
+    <item>
+        <layer-list>
+
+            <!--
+                Sombra exterior muy suave.
+                No debe ser demasiado opaca para no parecer un rectángulo detrás.
+            -->
+            <item
+                android:left="2dp"
+                android:top="5dp"
+                android:right="2dp"
+                android:bottom="0dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="22dp" />
+                    <solid android:color="#22000000" />
+                </shape>
+            </item>
+
+            <!--
+                Glow RGB muy sutil debajo del botón.
+                Ayuda a dar profundidad sin matar el efecto glass.
+            -->
+            <item
+                android:left="1dp"
+                android:top="2dp"
+                android:right="1dp"
+                android:bottom="2dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="21dp" />
+                    <gradient
+                        android:angle="0"
+                        android:startColor="#22FF5EA8"
+                        android:centerColor="#2254ECFF"
+                        android:endColor="#22B45EFF" />
+                </shape>
+            </item>
+
+            <!--
+                Borde RGB degradado.
+                Esta capa queda visible alrededor del cristal interno.
+            -->
+            <item
+                android:left="0dp"
+                android:top="0dp"
+                android:right="0dp"
+                android:bottom="2dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="21dp" />
+                    <gradient
+                        android:angle="0"
+                        android:startColor="#FFFF5EA8"
+                        android:centerColor="#FF54ECFF"
+                        android:endColor="#FFB45EFF" />
+                </shape>
+            </item>
+
+            <!--
+                Cristal interno.
+                MUY IMPORTANTE:
+                El alpha es bajo para que el fondo animado se vea a través.
+                Si esta capa es muy opaca, se pierde el efecto glass.
+            -->
+            <item
+                android:left="2dp"
+                android:top="2dp"
+                android:right="2dp"
+                android:bottom="4dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="19dp" />
+
+                    <!-- Centro glass translúcido -->
+                    <solid android:color="#1010152A" />
+
+                    <!-- Línea interior blanca/translúcida -->
+                    <stroke
+                        android:width="1dp"
+                        android:color="#1010152A" />
+                </shape>
+            </item>
+
+            <!--
+                Reflejo superior del cristal.
+                Es una franja muy transparente que da efecto vidrio.
+            -->
+            <item
+                android:left="5dp"
+                android:top="4dp"
+                android:right="5dp"
+                android:bottom="31dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="16dp" />
+                    <gradient
+                        android:angle="90"
+                        android:startColor="#1010152A"
+                        android:endColor="#1010152A" />
+                </shape>
+            </item>
+
+            <!--
+                Sombra interna inferior.
+                Da contraste al texto sin hacer opaco todo el botón.
+            -->
+            <item
+                android:left="4dp"
+                android:top="30dp"
+                android:right="4dp"
+                android:bottom="5dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="16dp" />
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#18000000"
+                        android:endColor="#00000000" />
+                </shape>
+            </item>
+
+        </layer-list>
+    </item>
+
+</ripple>
