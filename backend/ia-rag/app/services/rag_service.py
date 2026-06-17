@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import unicodedata
 from pathlib import Path
@@ -7,7 +8,8 @@ from groq import Groq
 
 from app.core.config import get_settings
 
-TOP_SECTIONS = 3
+MAX_CONTEXT_SECTIONS = 5
+TOP_CANDIDATES = 3
 
 
 class RagService:
@@ -32,16 +34,17 @@ class RagService:
             return ""
         return file_path.read_text(encoding="utf-8", errors="ignore")
 
+    # ------------------------------------------------------------------ #
+    # Text normalization                                                   #
+    # ------------------------------------------------------------------ #
+
     def strip_front_matter(self, text: str) -> str:
-        markers = ["1. Introducción", "1. Introduccion"]
-        for marker in markers:
+        for marker in ("1. Introducción", "1. Introduccion"):
             first = text.find(marker)
             if first == -1:
                 continue
             second = text.find(marker, first + len(marker))
-            if second != -1:
-                return text[second:]
-            return text[first:]
+            return text[second:] if second != -1 else text[first:]
         return text
 
     def normalize_text(self, text: str) -> str:
@@ -51,45 +54,85 @@ class RagService:
         text = re.sub(r"\n{2,}", "\n\n", text)
         return text.strip()
 
-    def split_into_sections(self, text: str) -> list:
+    # ------------------------------------------------------------------ #
+    # Section splitting — returns structured dicts                         #
+    # ------------------------------------------------------------------ #
+
+    _HEADING = re.compile(r"^(\d+(?:\.\d+)*)\.?\s+\S")
+
+    def split_into_sections(self, text: str) -> list[dict]:
         text = self.normalize_text(text)
         if not text:
             return []
 
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
         sections = []
-        current = []
-        heading_pattern = re.compile(r"^\d+(\.\d+)*\.?\s+\S")
+        current: list[str] = []
 
         for line in lines:
-            if heading_pattern.match(line) and current:
-                sections.append(" ".join(current).strip())
+            if self._HEADING.match(line) and current:
+                sections.append(self._build_section(current))
                 current = [line]
             else:
                 current.append(line)
 
         if current:
-            sections.append(" ".join(current).strip())
+            sections.append(self._build_section(current))
 
         return sections
+
+    def _build_section(self, lines: list[str]) -> dict:
+        first = lines[0]
+        text = " ".join(lines).strip()
+
+        m = re.match(r"^(\d+(?:\.\d+)*)\.?\s+(.*)", first)
+        if m:
+            heading = m.group(1)
+            title = m.group(2).strip()[:80]
+        else:
+            heading = ""
+            title = first[:80]
+
+        level = heading.count(".") + 1 if heading else 0
+        parent = ".".join(heading.split(".")[:-1]) if "." in heading else ""
+
+        return {
+            "heading": heading,
+            "title": title,
+            "text": text,
+            "level": level,
+            "parent": parent,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Keyword extraction                                                   #
+    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _to_ascii(text: str) -> str:
         return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
 
-    def extract_keywords(self, question: str) -> list:
-        stopwords = {
-            "que", "dice", "libro", "antiguo", "nuevo", "sobre",
-            "del", "los", "las", "una", "uno", "unos", "unas", "para",
-            "como", "cual", "cuales", "cuando", "donde",
-            "el", "la", "de", "en", "por", "con", "sin", "al", "se",
-            "es", "son", "un",
-        }
+    _STOPWORDS = {
+        "que", "dice", "libro", "antiguo", "nuevo", "sobre", "del", "los",
+        "las", "una", "uno", "unos", "unas", "para", "como", "cual", "cuales",
+        "cuando", "donde", "el", "la", "de", "en", "por", "con", "sin", "al",
+        "se", "es", "son", "un", "sus", "has", "hay", "este", "esta", "estos",
+        "estan", "ser", "fue", "son", "han", "muy", "mas", "pero", "sino",
+        "bien", "mal", "puede", "pueden",
+    }
+
+    _LIST_TRIGGERS = {
+        "cuales", "tipos", "partes", "componentes", "enumera", "lista",
+        "cuantos", "menciona", "diferencias", "caracteristicas", "niveles",
+        "elementos", "funciones", "formas", "clases",
+    }
+
+    def extract_keywords(self, question: str) -> list[str]:
         normalized = self._to_ascii(question.lower())
         words = re.findall(r"\w+", normalized)
-        keywords = [w for w in words if len(w) >= 3 and w not in stopwords]
+        keywords = [w for w in words if len(w) >= 3 and w not in self._STOPWORDS]
 
-        seen = set()
+        seen: set[str] = set()
         unique = []
         for w in keywords:
             if w not in seen:
@@ -97,71 +140,185 @@ class RagService:
                 unique.append(w)
         return unique
 
-    def is_noise_section(self, section: str) -> bool:
-        if len(section.strip()) < 80:
+    def _is_list_question(self, question: str) -> bool:
+        normalized = self._to_ascii(question.lower())
+        words = set(re.findall(r"\w+", normalized))
+        return bool(words & self._LIST_TRIGGERS)
+
+    @staticmethod
+    def _keyword_variants(kw: str) -> list[str]:
+        """Return singular/plural variants to handle basic Spanish morphology."""
+        variants = [kw]
+        if kw.endswith("s") and len(kw) > 4:
+            variants.append(kw[:-1])  # buses → bus
+        elif kw.endswith("es") and len(kw) > 4:
+            variants.append(kw[:-2])  # tipos → tipo
+        else:
+            variants.append(kw + "s")  # bus → buses
+        return variants
+
+    # ------------------------------------------------------------------ #
+    # Noise detection                                                      #
+    # ------------------------------------------------------------------ #
+
+    def is_noise_section(self, section: dict) -> bool:
+        text = section["text"]
+        if len(text.strip()) < 80:
             return True
-        if sum(ch.isalpha() for ch in section) < 40:
+        if sum(ch.isalpha() for ch in text) < 40:
             return True
         return False
 
-    def score_section(self, keywords: list, section: str) -> int:
-        section_ascii = self._to_ascii(section.lower())
+    # ------------------------------------------------------------------ #
+    # Scoring                                                              #
+    # ------------------------------------------------------------------ #
 
-        heading_match = re.match(r"^[\d.]+\s+(.+?)(?:\s{2}|\Z)", section_ascii)
-        heading = heading_match.group(1) if heading_match else ""
-
-        score = 0
+    def _compute_idf(self, keywords: list[str], sections: list[dict]) -> dict[str, float]:
+        N = max(len(sections), 1)
+        idf: dict[str, float] = {}
         for kw in keywords:
-            count = section_ascii.count(kw)
-            if count > 0:
-                score += 2 + min(count - 1, 3)
-            if kw in heading:
-                score += 3
+            variants = self._keyword_variants(kw)
+            df = sum(
+                1 for s in sections
+                if any(v in self._to_ascii(s["text"].lower()) for v in variants)
+            )
+            idf[kw] = math.log((N + 1) / (df + 1)) + 1
+        return idf
+
+    def score_section(self, keywords: list[str], question: str, section: dict,
+                      is_list_question: bool = False, idf: dict | None = None) -> float:
+        text_ascii = self._to_ascii(section["text"].lower())
+        title_ascii = self._to_ascii(section["title"].lower())
+        score = 0.0
+
+        for kw in keywords:
+            weight = idf[kw] if idf else 1.0
+            for variant in self._keyword_variants(kw):
+                count = text_ascii.count(variant)
+                if count > 0:
+                    score += (2 + min(count - 1, 3)) * weight
+                    if variant in title_ascii:
+                        score += 3 * weight
+                    break
+
+        # Consecutive keyword-pair phrase bonus
+        q_ascii = self._to_ascii(question.lower())
+        q_words = re.findall(r"\w+", q_ascii)
+        q_kws = [w for w in q_words if w not in self._STOPWORDS and len(w) >= 3]
+        for i in range(len(q_kws) - 1):
+            phrase = q_kws[i] + " " + q_kws[i + 1]
+            if phrase in text_ascii:
+                score += 4.0
+
+        # List-question boost: reward sections with enumerated content
+        if is_list_question:
+            list_items = len(re.findall(r"(?:^|\s)(?:\d+[\.\)]\s|[A-Z][\.\)]\s)", section["text"]))
+            score += min(list_items * 2, 8)
+
         return score
+
+    # ------------------------------------------------------------------ #
+    # Noise marker removal                                                 #
+    # ------------------------------------------------------------------ #
 
     def remove_noise_markers(self, text: str) -> str:
         text_lower = text.lower()
-        for marker in [
-            "caso práctico inicial",
-            "caso practico inicial",
-            "práctica profesional",
-            "ficha de trabajo",
-            "situación de partida",
-        ]:
+        for marker in (
+            "caso práctico inicial", "caso practico inicial",
+            "práctica profesional", "ficha de trabajo", "situación de partida",
+        ):
             pos = text_lower.find(marker)
             if pos != -1:
                 return text[:pos].strip()
         return text
 
+    # ------------------------------------------------------------------ #
+    # Context retrieval with parent→child expansion                        #
+    # ------------------------------------------------------------------ #
+
     def retrieve_context(self, question: str) -> list[dict]:
         books = self.load_books_metadata()
         keywords = self.extract_keywords(question)
+        is_list_q = self._is_list_question(question)
 
         if not keywords:
             return []
 
-        scored = []
+        book_data: dict[str, tuple[list[dict], dict]] = {}
+        scored: list[dict] = []
 
         for book in books:
             text = self.load_book_text(book["filename"])
             if not text:
                 continue
-
             sections = self.split_into_sections(text)
+            book_data[book["filename"]] = (sections, book)
 
-            for section in sections:
-                if self.is_noise_section(section):
-                    continue
+            valid = [s for s in sections if not self.is_noise_section(s)]
+            idf = self._compute_idf(keywords, valid)
 
-                score = self.score_section(keywords, section)
+            for section in valid:
+                score = self.score_section(keywords, question, section, is_list_q, idf)
                 if score >= 2:
-                    scored.append({"chunk": section, "book": book, "score": score})
+                    scored.append({"section": section, "book": book, "score": score})
 
         if not scored:
             return []
 
         scored.sort(key=lambda x: x["score"], reverse=True)
-        return scored[:TOP_SECTIONS]
+        top = scored[:TOP_CANDIDATES]
+
+        # Build children/sibling index per book
+        children_of: dict[str, dict[str, list[dict]]] = {}
+        for fname, (sections, _) in book_data.items():
+            index: dict[str, list[dict]] = {}
+            for s in sections:
+                if s["parent"]:
+                    index.setdefault(s["parent"], []).append(s)
+            children_of[fname] = index
+
+        result: list[dict] = []
+        seen: set[str] = set()
+
+        for item in top:
+            sec = item["section"]
+            book = item["book"]
+            heading = sec["heading"]
+            fname = book["filename"]
+            key = f"{fname}:{heading}"
+
+            if key not in seen:
+                seen.add(key)
+                result.append({"chunk": sec["text"], "book": book, "score": item["score"]})
+
+            children = children_of.get(fname, {}).get(heading, [])
+            for child in children[:3]:
+                child_key = f"{fname}:{child['heading']}"
+                if child_key not in seen and not self.is_noise_section(child):
+                    seen.add(child_key)
+                    result.append({"chunk": child["text"], "book": book, "score": 0})
+
+            # If this is a child, include siblings that also scored well
+            if sec["parent"]:
+                siblings = [
+                    x for x in scored
+                    if x["section"]["parent"] == sec["parent"]
+                    and x["book"]["filename"] == fname
+                    and f"{fname}:{x['section']['heading']}" not in seen
+                ]
+                for sib in siblings[:2]:
+                    sib_key = f"{fname}:{sib['section']['heading']}"
+                    seen.add(sib_key)
+                    result.append({"chunk": sib["section"]["text"], "book": book, "score": sib["score"]})
+
+            if len(result) >= MAX_CONTEXT_SECTIONS:
+                break
+
+        return result[:MAX_CONTEXT_SECTIONS]
+
+    # ------------------------------------------------------------------ #
+    # Answer generation                                                    #
+    # ------------------------------------------------------------------ #
 
     def generate_answer(self, question: str, matches: list[dict]) -> str:
         if not matches:
@@ -187,6 +344,7 @@ class RagService:
         system_prompt = (
             "Eres un asistente educativo especializado en informática y electrónica. "
             "Responde la pregunta del usuario basándote ÚNICAMENTE en los fragmentos del libro que se te proporcionan. "
+            "Si la pregunta es sobre tipos, partes o listas, enuméralos claramente. "
             "Si la información necesaria no está en los fragmentos, indícalo con claridad. "
             "Responde en español, de forma concisa y clara."
         )
@@ -208,11 +366,15 @@ class RagService:
 
         return response.choices[0].message.content.strip()
 
+    # ------------------------------------------------------------------ #
+    # Public API                                                           #
+    # ------------------------------------------------------------------ #
+
     def ask(self, question: str, context: list[str] | None = None, user_id: str | None = None) -> dict:
         matches = self.retrieve_context(question)
         answer = self.generate_answer(question, matches)
 
-        seen = set()
+        seen: set[str] = set()
         sources = []
         for m in matches:
             key = m["book"]["filename"]
