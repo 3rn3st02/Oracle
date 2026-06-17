@@ -1,6 +1,16 @@
 
 # Troubleshooting ORACLE
 
+## Migración de pruebas locales a API en la nube
+
+A partir de la integración con la API remota, las pruebas principales ya no dependen de:
+- ADB reverse
+- uvicorn local
+- IP local del equipo
+
+La verificación se realiza directamente contra:
+https://api-oraculo.sus.pe/
+
 ## Problema: respuestas vacías
 
 Causa:

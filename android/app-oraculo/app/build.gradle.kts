@@ -15,8 +15,8 @@ android {
         minSdk = 30
         targetSdk = 35
 
-        versionCode = 6
-        versionName = "1.2.2"
+        versionCode = 7
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -26,7 +26,7 @@ android {
             buildConfigField(
                 "String",
                 "BASE_URL",
-                "\"http://192.168.30.61:8000/\""
+                "\"https://api-oraculo.sus.pe/\""
             )
         }
 
@@ -36,7 +36,7 @@ android {
             buildConfigField(
                 "String",
                 "BASE_URL",
-                "\"https://api-oraculo.example.com/\""
+                "\"https://api-oraculo.sus.pe/\""
             )
 
             proguardFiles(

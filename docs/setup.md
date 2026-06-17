@@ -14,7 +14,17 @@ Este documento describe cómo levantar el sistema completo en entorno local. Est
 
 ---
 
-#  2. Backend IA RAG (Python)
+# Backend IA RAG (Python)
+
+## Pruebas contra API en la nube
+
+La versión actual del cliente Android consume directamente la API desplegada en:
+
+https://api-oraculo.sus.pe/
+
+Esto reemplaza el flujo principal de pruebas locales por ADB reverse o IP local.
+
+El flujo local se mantiene solo como alternativa de desarrollo o debugging.
 
 ## Crear entorno virtual
 
