@@ -7,6 +7,8 @@ from groq import Groq
 
 from app.core.config import get_settings
 
+TOP_SECTIONS = 3
+
 
 class RagService:
     def __init__(self) -> None:
@@ -77,11 +79,11 @@ class RagService:
 
     def extract_keywords(self, question: str) -> list:
         stopwords = {
-            "que", "que", "dice", "libro", "antiguo", "nuevo", "sobre",
+            "que", "dice", "libro", "antiguo", "nuevo", "sobre",
             "del", "los", "las", "una", "uno", "unos", "unas", "para",
-            "como", "como", "cual", "cual", "cuales", "cuando", "donde",
+            "como", "cual", "cuales", "cuando", "donde",
             "el", "la", "de", "en", "por", "con", "sin", "al", "se",
-            "es", "son", "un", "cuales"
+            "es", "son", "un",
         }
         normalized = self._to_ascii(question.lower())
         words = re.findall(r"\w+", normalized)
@@ -104,7 +106,18 @@ class RagService:
 
     def score_section(self, keywords: list, section: str) -> int:
         section_ascii = self._to_ascii(section.lower())
-        return sum(2 for kw in keywords if kw in section_ascii)
+
+        heading_match = re.match(r"^[\d.]+\s+(.+?)(?:\s{2}|\Z)", section_ascii)
+        heading = heading_match.group(1) if heading_match else ""
+
+        score = 0
+        for kw in keywords:
+            count = section_ascii.count(kw)
+            if count > 0:
+                score += 2 + min(count - 1, 3)
+            if kw in heading:
+                score += 3
+        return score
 
     def remove_noise_markers(self, text: str) -> str:
         text_lower = text.lower()
@@ -113,19 +126,21 @@ class RagService:
             "caso practico inicial",
             "práctica profesional",
             "ficha de trabajo",
-            "situación de partida"
+            "situación de partida",
         ]:
             pos = text_lower.find(marker)
             if pos != -1:
                 return text[:pos].strip()
         return text
 
-    def retrieve_context(self, question: str) -> dict | None:
+    def retrieve_context(self, question: str) -> list[dict]:
         books = self.load_books_metadata()
         keywords = self.extract_keywords(question)
 
-        best_match = None
-        best_score = 0
+        if not keywords:
+            return []
+
+        scored = []
 
         for book in books:
             text = self.load_book_text(book["filename"])
@@ -139,23 +154,17 @@ class RagService:
                     continue
 
                 score = self.score_section(keywords, section)
-                if score > best_score:
-                    best_score = score
-                    best_match = {"chunk": section, "book": book}
+                if score >= 2:
+                    scored.append({"chunk": section, "book": book, "score": score})
 
-        if not best_match:
-            return None
+        if not scored:
+            return []
 
-        best_chunk_lower = best_match["chunk"].lower()
-        matched_keywords = [kw for kw in keywords if kw in best_chunk_lower]
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:TOP_SECTIONS]
 
-        if best_score < 2 or len(matched_keywords) == 0:
-            return None
-
-        return best_match
-
-    def generate_answer(self, question: str, match: dict | None) -> str:
-        if not match:
+    def generate_answer(self, question: str, matches: list[dict]) -> str:
+        if not matches:
             return (
                 f"No he encontrado suficiente información relevante en los libros "
                 f"para responder con claridad a la pregunta: '{question}'."
@@ -167,18 +176,23 @@ class RagService:
                 "Añade GROQ_API_KEY al archivo .env para activarlo."
             )
 
-        chunk = self.remove_noise_markers(match["chunk"].strip())
-        chunk = re.sub(r"\s+", " ", chunk).strip()
+        chunks = []
+        for i, m in enumerate(matches, 1):
+            chunk = self.remove_noise_markers(m["chunk"].strip())
+            chunk = re.sub(r"\s+", " ", chunk).strip()
+            chunks.append(f"[Fragmento {i}]\n{chunk}")
+
+        context = "\n\n".join(chunks)
 
         system_prompt = (
             "Eres un asistente educativo especializado en informática y electrónica. "
-            "Responde la pregunta del usuario basándote ÚNICAMENTE en el fragmento del libro que se te proporciona. "
-            "Si la información necesaria no está en el fragmento, indícalo con claridad. "
+            "Responde la pregunta del usuario basándote ÚNICAMENTE en los fragmentos del libro que se te proporcionan. "
+            "Si la información necesaria no está en los fragmentos, indícalo con claridad. "
             "Responde en español, de forma concisa y clara."
         )
 
         user_message = (
-            f"Fragmento del libro:\n\"\"\"\n{chunk}\n\"\"\"\n\n"
+            f"Fragmentos del libro:\n\"\"\"\n{context}\n\"\"\"\n\n"
             f"Pregunta: {question}"
         )
 
@@ -189,29 +203,28 @@ class RagService:
                 {"role": "user", "content": user_message},
             ],
             temperature=0.2,
-            max_tokens=512,
+            max_tokens=1024,
         )
 
         return response.choices[0].message.content.strip()
 
     def ask(self, question: str, context: list[str] | None = None, user_id: str | None = None) -> dict:
-        match = self.retrieve_context(question)
-        answer = self.generate_answer(question, match)
+        matches = self.retrieve_context(question)
+        answer = self.generate_answer(question, matches)
 
+        seen = set()
         sources = []
-        if match:
-            sources = [
-                {
-                    "source": match["book"]["filename"],
-                    "label": match["book"]["label"],
-                    "version": match["book"]["version"]
-                }
-            ]
+        for m in matches:
+            key = m["book"]["filename"]
+            if key not in seen:
+                seen.add(key)
+                sources.append({
+                    "source": m["book"]["filename"],
+                    "label": m["book"]["label"],
+                    "version": m["book"]["version"],
+                })
 
-        return {
-            "answer": answer,
-            "sources": sources
-        }
+        return {"answer": answer, "sources": sources}
 
 
 rag_service = RagService()

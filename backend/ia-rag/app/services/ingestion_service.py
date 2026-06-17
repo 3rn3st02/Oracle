@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from docx import Document
@@ -58,6 +59,21 @@ class IngestionService:
         if suffix == ".docx":
             return self.ingest_docx(filename)
         raise ValueError(f"Formato no soportado: {suffix}. Use .pdf o .docx")
+
+    def update_metadata(self, filename: str, label: str) -> None:
+        metadata_path = self.base_path / "data" / "books_metadata.json"
+        books = []
+        if metadata_path.exists():
+            books = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+        txt_filename = Path(filename).stem + ".txt"
+        if any(b["filename"] == txt_filename for b in books):
+            return
+
+        books.append({"filename": txt_filename, "label": label, "version": "new"})
+        metadata_path.write_text(
+            json.dumps(books, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 ingestion_service = IngestionService()

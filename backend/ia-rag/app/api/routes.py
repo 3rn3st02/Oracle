@@ -1,12 +1,14 @@
 import os
 import time
 import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.core.config import get_settings
 from app.models.request_models import AskRequest
 from app.models.response_models import AskResponse, HealthResponse
+from app.services.ingestion_service import ingestion_service
 from app.services.rag_service import rag_service
 
 router = APIRouter()
@@ -54,6 +56,26 @@ def debug():
         "books_metadata": books,
         "books_detail": book_info,
     }
+
+
+@router.post("/upload")
+async def upload_book(file: UploadFile = File(...)):
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in (".pdf", ".docx"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se aceptan archivos .pdf o .docx"
+        )
+
+    dest = ingestion_service.books_path / file.filename
+    dest.write_bytes(await file.read())
+
+    ingestion_service.ingest_file(file.filename)
+
+    label = Path(file.filename).stem
+    ingestion_service.update_metadata(file.filename, label)
+
+    return {"status": "ok", "filename": file.filename, "label": label}
 
 
 @router.post("/ask", response_model=AskResponse)
