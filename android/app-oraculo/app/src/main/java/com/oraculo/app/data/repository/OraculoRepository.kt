@@ -28,13 +28,15 @@ class OraculoRepository {
         }
     }
 
+    // Se modifica estrura del contrato de respuestas para que sea compatible con el modelo de la API a partir
+    // de la v0.5-->
     suspend fun ask(question: String): Result<String> {
         return try {
             val response = RetrofitClient.api.ask(
                 AskRequest(
                     question = question,
-                    user_id = "android-test",
-                    context = emptyList()
+                    language = "es",
+                    top_k = 3
                 )
             )
 
@@ -42,17 +44,25 @@ class OraculoRepository {
                 val body = response.body()
 
                 if (body?.status == "ok") {
+                    val answer = body.data?.answer ?: "Respuesta vacía"
 
-                    val sourcesText = body.sources.joinToString("\n") { sourceItem ->
-                        "- ${sourceItem.source}"
+                    val sources = body.data?.sources ?: emptyList()
+
+                    val sourcesText = if (sources.isNotEmpty()) {
+                        sources.joinToString("\n") { sourceItem ->
+                            "- ${sourceItem.source}"
+                        }
+                    } else {
+                        "Sin fuentes reportadas"
                     }
 
                     Result.success(
-                        (body.answer ?: "Respuesta vacía") + "\n\nFuentes:\n" + sourcesText
+                        answer + "\n\nFuentes:\n" + sourcesText
                     )
-
                 } else {
-                    Result.failure(Exception("Backend error"))
+                    Result.failure(
+                        Exception("Backend error: ${body?.error ?: "respuesta inválida"}")
+                    )
                 }
 
             } else {

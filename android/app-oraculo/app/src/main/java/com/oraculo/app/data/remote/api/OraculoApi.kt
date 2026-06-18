@@ -1,6 +1,8 @@
 package com.oraculo.app.data.remote.api
 
-import com.oraculo.app.data.remote.dto.*
+import com.oraculo.app.data.remote.dto.AskRequest
+import com.oraculo.app.data.remote.dto.AskResponse
+import com.oraculo.app.data.remote.dto.HealthResponse
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
