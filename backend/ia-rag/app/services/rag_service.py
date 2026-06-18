@@ -1,5 +1,6 @@
 import json
 import math
+import random
 import re
 import unicodedata
 from pathlib import Path
@@ -320,12 +321,18 @@ class RagService:
     # Answer generation                                                    #
     # ------------------------------------------------------------------ #
 
+    _OFF_TOPIC_REPLIES = [
+        "Céntrate en clase 😄",
+        "Eso no entra en el examen... que yo sepa 🤔",
+        "Mi libro no llega hasta ahí, ¡pero tú sí puedes! 📚",
+        "Houston, tenemos un problema: eso no está en el temario 🚀",
+        "Pregúntale eso a Google, yo solo sé de lo mío 😅",
+        "¿Eso lo vas a poner en el trabajo final? Porque no te lo voy a poder ayudar 😬",
+    ]
+
     def generate_answer(self, question: str, matches: list[dict]) -> str:
         if not matches:
-            return (
-                f"No he encontrado suficiente información relevante en los libros "
-                f"para responder con claridad a la pregunta: '{question}'."
-            )
+            return random.choice(self._OFF_TOPIC_REPLIES)
 
         if not self._groq:
             return (
@@ -346,6 +353,8 @@ class RagService:
             "Responde la pregunta del usuario basándote ÚNICAMENTE en los fragmentos del libro que se te proporcionan. "
             "Si la pregunta es sobre tipos, partes o listas, enuméralos claramente. "
             "Si la información necesaria no está en los fragmentos, indícalo con claridad. "
+            "IMPORTANTE: Empieza siempre la respuesta directamente con la definición o el contenido. "
+            "Nunca empieces con 'Según el Fragmento', 'En el Fragmento', 'De acuerdo con' ni referencias al fragmento. "
             "Responde en español, de forma concisa y clara."
         )
 
@@ -367,10 +376,66 @@ class RagService:
         return response.choices[0].message.content.strip()
 
     # ------------------------------------------------------------------ #
+    # Special hardcoded responses                                          #
+    # ------------------------------------------------------------------ #
+
+    _SPECIAL_SOURCE = [{"source": "Oráculo Info", "label": "Oráculo Info", "version": "static"}]
+
+    _WHO_AM_I_TRIGGERS = [
+        "quien eres", "que eres", "presentate", "hablame de ti",
+        "como te llamas", "cual es tu nombre", "quien es oraculo",
+        "que es oraculo", "quien soy", "quien soy yo",
+    ]
+    _WHO_AM_I_REPLY = (
+        "Soy Oráculo, una IA especializada en Montaje y Mantenimiento de sistemas informáticos. "
+        "Fui creada por Arandeitors y Archvaro, dos apasionados de la programación e informática. "
+        "Mi cerebro piensa en Python y mi interfaz habla Kotlin. ¿En qué puedo ayudarte hoy?"
+    )
+
+    _CREATORS_TRIGGERS = [
+        "quienes son los creadores", "quien te hizo", "quien os hizo",
+        "quien te creo", "quien os creo", "quienes te crearon",
+        "quienes son tus creadores", "quien hizo oraculo",
+        "quien te programo", "quien te diseno", "quien esta detras",
+        "quien hizo oraculo", "los creadores", "tus creadores",
+        "quien te desarrollo",
+    ]
+    _CREATORS_REPLY = (
+        "Archvaro — Guatemalteco de nacimiento, informático por elección. "
+        "El tipo que hace que las cosas funcionen.\n"
+        "Arandeitors — Vasco de origen, programador y fanático del Clash of Clans "
+        "y Kingdom Hearts. El que le da alma al código."
+    )
+
+    @staticmethod
+    def _normalize_question(text: str) -> str:
+        result = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode("ascii")
+        result = re.sub(r"[^\w\s]", " ", result)
+        result = re.sub(r"\s+", " ", result).strip()
+        return result
+
+    def detect_special_question(self, question: str) -> dict | None:
+        normalized = self._normalize_question(question)
+
+        for trigger in self._WHO_AM_I_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._WHO_AM_I_REPLY, "sources": self._SPECIAL_SOURCE}
+
+        for trigger in self._CREATORS_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._CREATORS_REPLY, "sources": self._SPECIAL_SOURCE}
+
+        return None
+
+    # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
     def ask(self, question: str, context: list[str] | None = None, user_id: str | None = None) -> dict:
+        special = self.detect_special_question(question)
+        if special:
+            return special
+
         matches = self.retrieve_context(question)
         answer = self.generate_answer(question, matches)
 
