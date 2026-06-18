@@ -3,6 +3,7 @@ package com.oraculo.app
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
@@ -13,22 +14,26 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import com.oraculo.app.data.remote.network.NetworkConfig
 import com.oraculo.app.data.repository.OraculoRepository
 import com.oraculo.app.ui.views.NightChatBackgroundView
 import kotlinx.coroutines.launch
-
+import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
 
     private val repository = OraculoRepository()
 
     private lateinit var nightChatBackground: NightChatBackgroundView
+
+    private lateinit var contentContainer: View
+    private lateinit var composerContainer: View
+
     private lateinit var textBackendStatus: TextView
     private lateinit var editQuestion: EditText
     private lateinit var buttonAsk: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var textQuestion: TextView
-
     private lateinit var textAnswer: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,28 +48,24 @@ class MainActivity : AppCompatActivity() {
         checkBackendHealth()
 
         Log.d("ORACULO_API", "MainActivity iniciada")
-        Log.d("ORACULO_API", "BASE_URL actual: ${BuildConfig.BASE_URL}")
+        Log.d("ORACULO_API", "BASE_URL actual: ${NetworkConfig.BASE_URL}")
     }
 
     override fun onResume() {
         super.onResume()
-
-        // Reanuda el fondo animado cuando la Activity vuelve a primer plano.
         nightChatBackground.resumeAnimation()
     }
 
     override fun onPause() {
-        // Pausa el fondo animado cuando la Activity pasa a segundo plano.
-        // Esto evita consumo innecesario de CPU/GPU.
         nightChatBackground.pauseAnimation()
-
         super.onPause()
     }
 
     private fun bindViews() {
-
-// Fondo animado nativo agregado en activity_main.xml.
         nightChatBackground = findViewById(R.id.nightChatBackground)
+
+        contentContainer = findViewById(R.id.contentContainer)
+        composerContainer = findViewById(R.id.composerContainer)
 
         textBackendStatus = findViewById(R.id.textBackendStatus)
         editQuestion = findViewById(R.id.editQuestion)
@@ -72,43 +73,85 @@ class MainActivity : AppCompatActivity() {
         progressBar = findViewById(R.id.progressBar)
         textQuestion = findViewById(R.id.textQuestion)
         textAnswer = findViewById(R.id.textAnswer)
-
-
     }
-
 
     private fun setupInsets() {
         /*
-         * Aplicamos los insets al contenedor de contenido, no al layout raíz.
+         * Este método mantiene el fondo animado intacto.
          *
-         * Motivo:
-         * - El layout raíz "main" contiene también el fondo animado.
-         * - Si ponemos padding al layout raíz, el fondo puede quedar recortado.
-         * - Al aplicar padding solo a "contentContainer", el fondo ocupa toda la pantalla
-         *   y el contenido respeta barras de sistema/notch/navigation bar.
+         * Importante:
+         * - No aplicamos padding al root "main"
+         * - El fondo animado sigue ocupando toda la pantalla
+         * - El contenido respeta barras del sistema
+         * - La caja inferior sube cuando aparece el teclado
          */
-        val contentContainer = findViewById<View>(R.id.contentContainer)
 
-        ViewCompat.setOnApplyWindowInsetsListener(contentContainer) { view, insets ->
+        val rootView: View = findViewById(R.id.main)
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
+
+            /*
+             * Insets de barras del sistema:
+             * status bar, navigation bar y zonas seguras del sistema.
+             */
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
 
-            view.setPadding(
+            /*
+             * Insets del teclado.
+             * Cuando el teclado aparece, imeInsets.bottom representa su altura.
+             */
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+
+            /*
+             * Altura real del teclado.
+             * Restamos systemBars.bottom para evitar sumar dos veces la barra de navegación.
+             */
+            val keyboardHeight = max(0, imeInsets.bottom - systemBars.bottom)
+
+            /*
+             * Padding del contenido principal.
+             * Se aplica solo al contentContainer para no recortar el fondo animado.
+             */
+            contentContainer.setPadding(
                 systemBars.left + 24.dpToPx(),
                 systemBars.top + 28.dpToPx(),
                 systemBars.right + 24.dpToPx(),
                 systemBars.bottom + 24.dpToPx()
             )
 
+            /*
+             * Movimiento de la barra inferior de mensaje.
+             *
+             * Si el teclado está cerrado:
+             * - keyboardHeight = 0
+             * - la barra queda con margen inferior normal
+             *
+             * Si el teclado está abierto:
+             * - keyboardHeight > 0
+             * - la barra sube por encima del teclado
+             */
+            val composerParams = composerContainer.layoutParams as ViewGroup.MarginLayoutParams
+            composerParams.leftMargin = 16.dpToPx()
+            composerParams.rightMargin = 16.dpToPx()
+            composerParams.bottomMargin = keyboardHeight + 16.dpToPx()
+            composerContainer.layoutParams = composerParams
+
             insets
         }
     }
 
-
     private fun setupListeners() {
+        /*
+         * Envío mediante botón.
+         */
         buttonAsk.setOnClickListener {
             sendQuestion()
         }
 
+        /*
+         * Envío desde el teclado cuando el IME action sea SEND.
+         * Si el teclado decide insertar salto de línea, el botón sigue siendo la vía principal.
+         */
         editQuestion.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
                 sendQuestion()
@@ -124,12 +167,13 @@ class MainActivity : AppCompatActivity() {
             textBackendStatus.text = "Backend: comprobando conexión..."
 
             val healthResult = repository.health()
-
+// Mensaje cuando se conecta correctamente
             healthResult
                 .onSuccess { message ->
                     Log.d("ORACULO_API", "HEALTH OK: $message")
                     textBackendStatus.text = "Backend: conectado correctamente"
                 }
+                // Mensaje cuando no logra establecer coneccion
                 .onFailure { error ->
                     Log.e("ORACULO_API", "HEALTH ERROR: ${error.message}", error)
                     textBackendStatus.text = "Backend: error de conexión"
@@ -150,7 +194,7 @@ class MainActivity : AppCompatActivity() {
             setLoading(true)
 
             textQuestion.text = "Pregunta: $question"
-            textAnswer.text = "Consultando backend..."
+            textAnswer.text = "Consultando ORACLE..."
 
             Log.d("ORACULO_API", "Enviando pregunta: $question")
 
@@ -160,6 +204,7 @@ class MainActivity : AppCompatActivity() {
                 .onSuccess { answer ->
                     Log.d("ORACULO_API", "ASK OK: $answer")
                     textAnswer.text = answer
+                    editQuestion.text.clear()
                 }
                 .onFailure { error ->
                     Log.e("ORACULO_API", "ASK ERROR: ${error.message}", error)
@@ -176,17 +221,7 @@ class MainActivity : AppCompatActivity() {
         editQuestion.isEnabled = !isLoading
     }
 
-    /**
-     * Convierte dp a píxeles usando la densidad actual de la pantalla.
-     *
-     * Se usa para mantener los paddings originales del XML:
-     * - 24dp horizontal
-     * - 28dp superior
-     * - 24dp inferior
-     */
     private fun Int.dpToPx(): Int {
         return (this * resources.displayMetrics.density).toInt()
     }
-
-
 }
