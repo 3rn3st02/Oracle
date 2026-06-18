@@ -1,16 +1,27 @@
 import json
 import math
-import random
 import re
-import unicodedata
 from pathlib import Path
 
 from groq import Groq
 
 from app.core.config import get_settings
+from app.utils.text_utils import (
+    extract_keywords,
+    get_search_variants,
+    is_list_question,
+    normalize_question,
+    to_ascii,
+)
 
 MAX_CONTEXT_SECTIONS = 5
 TOP_CANDIDATES = 3
+
+NO_CONTEXT_REPLY = (
+    "No tengo información sobre eso en los documentos disponibles. "
+    "Prueba con una pregunta relacionada con el temario de "
+    "Montaje y Mantenimiento de sistemas informáticos."
+)
 
 
 class RagService:
@@ -21,8 +32,11 @@ class RagService:
         settings = get_settings()
         self._groq = Groq(api_key=settings.groq_api_key) if settings.groq_api_key else None
 
-    def is_initialized(self) -> bool:
-        return True
+    # ── Metadata & text loading ──────────────────────────────────────────── #
+
+    def docs_count(self) -> int:
+        books = self.load_books_metadata()
+        return sum(1 for b in books if (self.processed_path / b["filename"]).exists())
 
     def load_books_metadata(self) -> list:
         if not self.metadata_path.exists():
@@ -35,9 +49,7 @@ class RagService:
             return ""
         return file_path.read_text(encoding="utf-8", errors="ignore")
 
-    # ------------------------------------------------------------------ #
-    # Text normalization                                                   #
-    # ------------------------------------------------------------------ #
+    # ── Text normalization ───────────────────────────────────────────────── #
 
     def strip_front_matter(self, text: str) -> str:
         for marker in ("1. Introducción", "1. Introduccion"):
@@ -55,9 +67,7 @@ class RagService:
         text = re.sub(r"\n{2,}", "\n\n", text)
         return text.strip()
 
-    # ------------------------------------------------------------------ #
-    # Section splitting — returns structured dicts                         #
-    # ------------------------------------------------------------------ #
+    # ── Section splitting ────────────────────────────────────────────────── #
 
     _HEADING = re.compile(r"^(\d+(?:\.\d+)*)\.?\s+\S")
 
@@ -65,27 +75,22 @@ class RagService:
         text = self.normalize_text(text)
         if not text:
             return []
-
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
-        sections = []
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        groups: list[list[str]] = []
         current: list[str] = []
-
         for line in lines:
             if self._HEADING.match(line) and current:
-                sections.append(self._build_section(current))
+                groups.append(current)
                 current = [line]
             else:
                 current.append(line)
-
         if current:
-            sections.append(self._build_section(current))
-
-        return sections
+            groups.append(current)
+        return [self._build_section(g) for g in groups]
 
     def _build_section(self, lines: list[str]) -> dict:
         first = lines[0]
         text = " ".join(lines).strip()
-
         m = re.match(r"^(\d+(?:\.\d+)*)\.?\s+(.*)", first)
         if m:
             heading = m.group(1)
@@ -93,108 +98,39 @@ class RagService:
         else:
             heading = ""
             title = first[:80]
-
         level = heading.count(".") + 1 if heading else 0
         parent = ".".join(heading.split(".")[:-1]) if "." in heading else ""
+        return {"heading": heading, "title": title, "text": text, "level": level, "parent": parent}
 
-        return {
-            "heading": heading,
-            "title": title,
-            "text": text,
-            "level": level,
-            "parent": parent,
-        }
-
-    # ------------------------------------------------------------------ #
-    # Keyword extraction                                                   #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _to_ascii(text: str) -> str:
-        return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-
-    _STOPWORDS = {
-        "que", "dice", "libro", "antiguo", "nuevo", "sobre", "del", "los",
-        "las", "una", "uno", "unos", "unas", "para", "como", "cual", "cuales",
-        "cuando", "donde", "el", "la", "de", "en", "por", "con", "sin", "al",
-        "se", "es", "son", "un", "sus", "has", "hay", "este", "esta", "estos",
-        "estan", "ser", "fue", "son", "han", "muy", "mas", "pero", "sino",
-        "bien", "mal", "puede", "pueden",
-    }
-
-    _LIST_TRIGGERS = {
-        "cuales", "tipos", "partes", "componentes", "enumera", "lista",
-        "cuantos", "menciona", "diferencias", "caracteristicas", "niveles",
-        "elementos", "funciones", "formas", "clases",
-    }
-
-    def extract_keywords(self, question: str) -> list[str]:
-        normalized = self._to_ascii(question.lower())
-        words = re.findall(r"\w+", normalized)
-        keywords = [w for w in words if len(w) >= 3 and w not in self._STOPWORDS]
-
-        seen: set[str] = set()
-        unique = []
-        for w in keywords:
-            if w not in seen:
-                seen.add(w)
-                unique.append(w)
-        return unique
-
-    def _is_list_question(self, question: str) -> bool:
-        normalized = self._to_ascii(question.lower())
-        words = set(re.findall(r"\w+", normalized))
-        return bool(words & self._LIST_TRIGGERS)
-
-    @staticmethod
-    def _keyword_variants(kw: str) -> list[str]:
-        """Return singular/plural variants to handle basic Spanish morphology."""
-        variants = [kw]
-        if kw.endswith("s") and len(kw) > 4:
-            variants.append(kw[:-1])  # buses → bus
-        elif kw.endswith("es") and len(kw) > 4:
-            variants.append(kw[:-2])  # tipos → tipo
-        else:
-            variants.append(kw + "s")  # bus → buses
-        return variants
-
-    # ------------------------------------------------------------------ #
-    # Noise detection                                                      #
-    # ------------------------------------------------------------------ #
+    # ── Noise detection ──────────────────────────────────────────────────── #
 
     def is_noise_section(self, section: dict) -> bool:
         text = section["text"]
-        if len(text.strip()) < 80:
-            return True
-        if sum(ch.isalpha() for ch in text) < 40:
-            return True
-        return False
+        return len(text.strip()) < 80 or sum(ch.isalpha() for ch in text) < 40
 
-    # ------------------------------------------------------------------ #
-    # Scoring                                                              #
-    # ------------------------------------------------------------------ #
+    # ── Scoring ─────────────────────────────────────────────────────────── #
 
     def _compute_idf(self, keywords: list[str], sections: list[dict]) -> dict[str, float]:
         N = max(len(sections), 1)
         idf: dict[str, float] = {}
         for kw in keywords:
-            variants = self._keyword_variants(kw)
+            variants = get_search_variants(kw)
             df = sum(
                 1 for s in sections
-                if any(v in self._to_ascii(s["text"].lower()) for v in variants)
+                if any(v in to_ascii(s["text"].lower()) for v in variants)
             )
             idf[kw] = math.log((N + 1) / (df + 1)) + 1
         return idf
 
     def score_section(self, keywords: list[str], question: str, section: dict,
-                      is_list_question: bool = False, idf: dict | None = None) -> float:
-        text_ascii = self._to_ascii(section["text"].lower())
-        title_ascii = self._to_ascii(section["title"].lower())
+                      is_list_q: bool = False, idf: dict | None = None) -> float:
+        text_ascii = to_ascii(section["text"].lower())
+        title_ascii = to_ascii(section["title"].lower())
         score = 0.0
 
         for kw in keywords:
             weight = idf[kw] if idf else 1.0
-            for variant in self._keyword_variants(kw):
+            for variant in get_search_variants(kw):
                 count = text_ascii.count(variant)
                 if count > 0:
                     score += (2 + min(count - 1, 3)) * weight
@@ -202,25 +138,19 @@ class RagService:
                         score += 3 * weight
                     break
 
-        # Consecutive keyword-pair phrase bonus
-        q_ascii = self._to_ascii(question.lower())
-        q_words = re.findall(r"\w+", q_ascii)
-        q_kws = [w for w in q_words if w not in self._STOPWORDS and len(w) >= 3]
+        q_ascii = to_ascii(question.lower())
+        q_kws = [w for w in re.findall(r"\w+", q_ascii) if len(w) >= 3]
         for i in range(len(q_kws) - 1):
-            phrase = q_kws[i] + " " + q_kws[i + 1]
-            if phrase in text_ascii:
+            if q_kws[i] + " " + q_kws[i + 1] in text_ascii:
                 score += 4.0
 
-        # List-question boost: reward sections with enumerated content
-        if is_list_question:
+        if is_list_q:
             list_items = len(re.findall(r"(?:^|\s)(?:\d+[\.\)]\s|[A-Z][\.\)]\s)", section["text"]))
             score += min(list_items * 2, 8)
 
         return score
 
-    # ------------------------------------------------------------------ #
-    # Noise marker removal                                                 #
-    # ------------------------------------------------------------------ #
+    # ── Noise marker removal ─────────────────────────────────────────────── #
 
     def remove_noise_markers(self, text: str) -> str:
         text_lower = text.lower()
@@ -233,14 +163,12 @@ class RagService:
                 return text[:pos].strip()
         return text
 
-    # ------------------------------------------------------------------ #
-    # Context retrieval with parent→child expansion                        #
-    # ------------------------------------------------------------------ #
+    # ── Context retrieval ────────────────────────────────────────────────── #
 
     def retrieve_context(self, question: str) -> list[dict]:
         books = self.load_books_metadata()
-        keywords = self.extract_keywords(question)
-        is_list_q = self._is_list_question(question)
+        keywords = extract_keywords(question)
+        is_list_q = is_list_question(question)
 
         if not keywords:
             return []
@@ -254,13 +182,11 @@ class RagService:
                 continue
             sections = self.split_into_sections(text)
             book_data[book["filename"]] = (sections, book)
-
             valid = [s for s in sections if not self.is_noise_section(s)]
             idf = self._compute_idf(keywords, valid)
-
             for section in valid:
                 score = self.score_section(keywords, question, section, is_list_q, idf)
-                if score >= 2:
+                if score >= 5:
                     scored.append({"section": section, "book": book, "score": score})
 
         if not scored:
@@ -269,7 +195,6 @@ class RagService:
         scored.sort(key=lambda x: x["score"], reverse=True)
         top = scored[:TOP_CANDIDATES]
 
-        # Build children/sibling index per book
         children_of: dict[str, dict[str, list[dict]]] = {}
         for fname, (sections, _) in book_data.items():
             index: dict[str, list[dict]] = {}
@@ -292,14 +217,12 @@ class RagService:
                 seen.add(key)
                 result.append({"chunk": sec["text"], "book": book, "score": item["score"]})
 
-            children = children_of.get(fname, {}).get(heading, [])
-            for child in children[:3]:
+            for child in children_of.get(fname, {}).get(heading, [])[:3]:
                 child_key = f"{fname}:{child['heading']}"
                 if child_key not in seen and not self.is_noise_section(child):
                     seen.add(child_key)
                     result.append({"chunk": child["text"], "book": book, "score": 0})
 
-            # If this is a child, include siblings that also scored well
             if sec["parent"]:
                 siblings = [
                     x for x in scored
@@ -317,22 +240,11 @@ class RagService:
 
         return result[:MAX_CONTEXT_SECTIONS]
 
-    # ------------------------------------------------------------------ #
-    # Answer generation                                                    #
-    # ------------------------------------------------------------------ #
-
-    _OFF_TOPIC_REPLIES = [
-        "Céntrate en clase 😄",
-        "Eso no entra en el examen... que yo sepa 🤔",
-        "Mi libro no llega hasta ahí, ¡pero tú sí puedes! 📚",
-        "Houston, tenemos un problema: eso no está en el temario 🚀",
-        "Pregúntale eso a Google, yo solo sé de lo mío 😅",
-        "¿Eso lo vas a poner en el trabajo final? Porque no te lo voy a poder ayudar 😬",
-    ]
+    # ── Answer generation ─────────────────────────────────────────────────── #
 
     def generate_answer(self, question: str, matches: list[dict]) -> str:
         if not matches:
-            return random.choice(self._OFF_TOPIC_REPLIES)
+            return NO_CONTEXT_REPLY
 
         if not self._groq:
             return (
@@ -352,22 +264,18 @@ class RagService:
             "Eres un asistente educativo especializado en informática y electrónica. "
             "Responde la pregunta del usuario basándote ÚNICAMENTE en los fragmentos del libro que se te proporcionan. "
             "Si la pregunta es sobre tipos, partes o listas, enuméralos claramente. "
-            "Si la información necesaria no está en los fragmentos, indícalo con claridad. "
-            "IMPORTANTE: Empieza siempre la respuesta directamente con la definición o el contenido. "
-            "Nunca empieces con 'Según el Fragmento', 'En el Fragmento', 'De acuerdo con' ni referencias al fragmento. "
+            "IMPORTANTE: Si los fragmentos no contienen información suficiente para responder con precisión, "
+            "responde exactamente: 'No tengo información suficiente en el temario para responder esto con precisión.' "
+            "No inventes ni supongas información que no esté explícitamente en los fragmentos. "
+            "Empieza la respuesta directamente con el contenido, sin referencias al fragmento ni frases introductorias. "
             "Responde en español, de forma concisa y clara."
-        )
-
-        user_message = (
-            f"Fragmentos del libro:\n\"\"\"\n{context}\n\"\"\"\n\n"
-            f"Pregunta: {question}"
         )
 
         response = self._groq.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
+                {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
             ],
             temperature=0.2,
             max_tokens=1024,
@@ -375,9 +283,7 @@ class RagService:
 
         return response.choices[0].message.content.strip()
 
-    # ------------------------------------------------------------------ #
-    # Special hardcoded responses                                          #
-    # ------------------------------------------------------------------ #
+    # ── Special hardcoded responses ──────────────────────────────────────── #
 
     _SPECIAL_SOURCE = [{"source": "Oráculo Info", "label": "Oráculo Info", "version": "static"}]
 
@@ -397,8 +303,7 @@ class RagService:
         "quien te creo", "quien os creo", "quienes te crearon",
         "quienes son tus creadores", "quien hizo oraculo",
         "quien te programo", "quien te diseno", "quien esta detras",
-        "quien hizo oraculo", "los creadores", "tus creadores",
-        "quien te desarrollo",
+        "los creadores", "tus creadores", "quien te desarrollo",
     ]
     _CREATORS_REPLY = (
         "Archvaro — Guatemalteco de nacimiento, informático por elección. "
@@ -407,29 +312,17 @@ class RagService:
         "y Kingdom Hearts. El que le da alma al código."
     )
 
-    @staticmethod
-    def _normalize_question(text: str) -> str:
-        result = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode("ascii")
-        result = re.sub(r"[^\w\s]", " ", result)
-        result = re.sub(r"\s+", " ", result).strip()
-        return result
-
     def detect_special_question(self, question: str) -> dict | None:
-        normalized = self._normalize_question(question)
-
+        normalized = normalize_question(question)
         for trigger in self._WHO_AM_I_TRIGGERS:
             if trigger in normalized:
                 return {"answer": self._WHO_AM_I_REPLY, "sources": self._SPECIAL_SOURCE}
-
         for trigger in self._CREATORS_TRIGGERS:
             if trigger in normalized:
                 return {"answer": self._CREATORS_REPLY, "sources": self._SPECIAL_SOURCE}
-
         return None
 
-    # ------------------------------------------------------------------ #
-    # Public API                                                           #
-    # ------------------------------------------------------------------ #
+    # ── Public API ───────────────────────────────────────────────────────── #
 
     def ask(self, question: str, context: list[str] | None = None, user_id: str | None = None) -> dict:
         special = self.detect_special_question(question)
