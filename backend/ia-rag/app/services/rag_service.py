@@ -271,17 +271,20 @@ class RagService:
             "Responde en español, de forma concisa y clara."
         )
 
-        response = self._groq.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
-            ],
-            temperature=0.2,
-            max_tokens=1024,
-        )
-
-        return response.choices[0].message.content.strip()
+        try:
+            response = self._groq.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
+                ],
+                temperature=0.2,
+                max_tokens=1024,
+                timeout=25,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception:
+            return "El servicio de IA no está disponible en este momento. Inténtalo de nuevo en unos segundos."
 
     # ── Special hardcoded responses ──────────────────────────────────────── #
 
