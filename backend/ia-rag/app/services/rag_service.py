@@ -283,7 +283,9 @@ class RagService:
                 timeout=25,
             )
             return response.choices[0].message.content.strip()
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("Groq error: %s", e)
             return "El servicio de IA no está disponible en este momento. Inténtalo de nuevo en unos segundos."
 
     # ── Special hardcoded responses ──────────────────────────────────────── #
