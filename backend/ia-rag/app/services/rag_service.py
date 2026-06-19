@@ -2,25 +2,28 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import AsyncGenerator
 
-from groq import Groq
+from groq import AsyncGroq, Groq
 
 from app.core.config import get_settings
+from app.services.calculator_service import calculator_service
 from app.utils.text_utils import (
     extract_keywords,
     get_search_variants,
+    is_injection_attempt,
     is_list_question,
     normalize_question,
     to_ascii,
 )
 
-MAX_CONTEXT_SECTIONS = 5
-TOP_CANDIDATES = 3
+MAX_CONTEXT_SECTIONS = 6
+TOP_CANDIDATES = 5
 
 NO_CONTEXT_REPLY = (
-    "No tengo información sobre eso en los documentos disponibles. "
-    "Prueba con una pregunta relacionada con el temario de "
-    "Montaje y Mantenimiento de sistemas informáticos."
+    "Todavía no he estudiado eso, pero puedo intentar ayudarte con lo que sé "
+    "del módulo de Montaje y Mantenimiento de Sistemas Microinformáticos. "
+    "Prueba a preguntarme sobre hardware, electricidad, sistemas operativos o mantenimiento. 🙂"
 )
 
 
@@ -31,6 +34,7 @@ class RagService:
         self.metadata_path = self.base_path / "data" / "books_metadata.json"
         settings = get_settings()
         self._groq = Groq(api_key=settings.groq_api_key) if settings.groq_api_key else None
+        self._groq_async = AsyncGroq(api_key=settings.groq_api_key) if settings.groq_api_key else None
 
     # ── Metadata & text loading ──────────────────────────────────────────── #
 
@@ -193,7 +197,17 @@ class RagService:
             return []
 
         scored.sort(key=lambda x: x["score"], reverse=True)
-        top = scored[:TOP_CANDIDATES]
+
+        # Diversidad: máximo 2 secciones por libro en los candidatos
+        top: list[dict] = []
+        book_counts: dict[str, int] = {}
+        for item in scored:
+            fname = item["book"]["filename"]
+            if book_counts.get(fname, 0) < 2:
+                top.append(item)
+                book_counts[fname] = book_counts.get(fname, 0) + 1
+            if len(top) >= TOP_CANDIDATES:
+                break
 
         children_of: dict[str, dict[str, list[dict]]] = {}
         for fname, (sections, _) in book_data.items():
@@ -261,32 +275,78 @@ class RagService:
         context = "\n\n".join(chunks)
 
         system_prompt = (
-            "Eres un asistente educativo especializado en informática y electrónica. "
-            "Responde la pregunta del usuario basándote ÚNICAMENTE en los fragmentos del libro que se te proporcionan. "
-            "Si la pregunta es sobre tipos, partes o listas, enuméralos claramente. "
-            "IMPORTANTE: Si los fragmentos no contienen información suficiente para responder con precisión, "
-            "responde exactamente: 'No tengo información suficiente en el temario para responder esto con precisión.' "
-            "No inventes ni supongas información que no esté explícitamente en los fragmentos. "
-            "Empieza la respuesta directamente con el contenido, sin referencias al fragmento ni frases introductorias. "
-            "Responde en español, de forma concisa y clara."
+            "Eres Oráculo, un asistente educativo del módulo 'Montaje y Mantenimiento de Sistemas Microinformáticos'. "
+            "Responde ÚNICAMENTE basándote en los fragmentos del libro proporcionados. "
+            "Reglas:\n"
+            "- Empieza con 'Basándome en lo que he aprendido, puedo decirte que...'\n"
+            "- Si la pregunta es sobre tipos, partes o pasos, usa listas o numeración.\n"
+            "- Respuestas cortas para preguntas simples, detalladas para conceptos complejos.\n"
+            "- Usa algún emoji ocasionalmente (📌 🔧 ⚡ 💡) para amenizar, pero sin abusar.\n"
+            "- Si la pregunta está en inglés, responde en español.\n"
+            "- Si los fragmentos no tienen información suficiente, responde exactamente: "
+            "'No tengo información suficiente en el temario para responder esto con precisión.'\n"
+            "- No inventes ni supongas nada que no esté en los fragmentos.\n"
+            "- Al final, añade una línea: '💡 **También podrías preguntarme:** [escribe una pregunta corta relacionada con el tema]'"
         )
 
+        import time as _t
+        for _attempt in range(2):
+            try:
+                response = self._groq.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
+                    ],
+                    temperature=0.3,
+                    max_tokens=600,
+                    timeout=25,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error("Groq error (intento %d): %s", _attempt + 1, e)
+                if _attempt == 0:
+                    _t.sleep(5)
+        return "El servicio de IA no está disponible en este momento. Inténtalo de nuevo en unos segundos."
+
+    async def stream_answer(self, question: str, matches: list[dict]) -> AsyncGenerator[str, None]:
+        if not matches or not self._groq_async:
+            yield NO_CONTEXT_REPLY
+            return
+
+        chunks_text = []
+        for i, m in enumerate(matches, 1):
+            chunk = self.remove_noise_markers(m["chunk"].strip())
+            chunk = re.sub(r"\s+", " ", chunk).strip()
+            chunks_text.append(f"[Fragmento {i}]\n{chunk}")
+        context = "\n\n".join(chunks_text)
+
+        system_prompt = (
+            "Eres Oráculo, asistente educativo del módulo 'Montaje y Mantenimiento de Sistemas Microinformáticos'. "
+            "Responde ÚNICAMENTE con los fragmentos proporcionados. "
+            "Empieza con 'Basándome en lo que he aprendido, puedo decirte que...' "
+            "Usa listas cuando corresponda. Responde en español."
+        )
         try:
-            response = self._groq.chat.completions.create(
+            stream = await self._groq_async.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
                 ],
-                temperature=0.2,
-                max_tokens=1024,
-                timeout=25,
+                temperature=0.3,
+                max_tokens=600,
+                stream=True,
             )
-            return response.choices[0].message.content.strip()
+            async for chunk in stream:
+                token = chunk.choices[0].delta.content or ""
+                if token:
+                    yield token
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error("Groq error: %s", e)
-            return "El servicio de IA no está disponible en este momento. Inténtalo de nuevo en unos segundos."
+            logging.getLogger(__name__).error("Groq stream error: %s", e)
+            yield "El servicio de IA no está disponible en este momento."
 
     # ── Special hardcoded responses ──────────────────────────────────────── #
 
@@ -298,9 +358,10 @@ class RagService:
         "que es oraculo", "quien soy", "quien soy yo",
     ]
     _WHO_AM_I_REPLY = (
-        "Soy Oráculo, una IA especializada en Montaje y Mantenimiento de sistemas informáticos. "
-        "Fui creada por Arandeitors y Archvaro, dos apasionados de la programación e informática. "
-        "Mi cerebro piensa en Python y mi interfaz habla Kotlin. ¿En qué puedo ayudarte hoy?"
+        "¡Hola! Soy Oráculo 🤖, tu asistente del módulo de Montaje y Mantenimiento de Sistemas Microinformáticos. "
+        "Fui creado por Arandeitors y Archvaro, dos apasionados de la programación e informática. "
+        "Mi cerebro funciona en Python y mi interfaz en Kotlin. "
+        "Puedo ayudarte con hardware, electricidad, sistemas operativos y mantenimiento. ¿Qué quieres saber?"
     )
 
     _CREATORS_TRIGGERS = [
@@ -317,25 +378,96 @@ class RagService:
         "y Kingdom Hearts. El que le da alma al código."
     )
 
+    _GREETING_TRIGGERS = [
+        "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches",
+        "hey", "que tal", "ola", "saludos", "hi", "hello",
+    ]
+    _GREETING_REPLIES = [
+        "¡Hola! 👋 Soy Oráculo, tu asistente de Montaje y Mantenimiento. ¿En qué puedo ayudarte hoy?",
+        "¡Buenas! 😊 Estoy aquí para ayudarte con el módulo de Montaje y Mantenimiento. ¿Qué necesitas?",
+        "¡Hola! Cuéntame, ¿tienes alguna duda sobre el temario?",
+    ]
+
+    _THANKS_TRIGGERS = [
+        "gracias", "muchas gracias", "gracias por", "thank you", "thanks",
+        "perfecto gracias", "ok gracias", "vale gracias",
+    ]
+    _THANKS_REPLY = "¡De nada! 😊 Si tienes más dudas sobre el temario, aquí estaré."
+
+    _VAGUE_TRIGGERS = [
+        "explicame todo", "cuentame todo", "hablame de todo",
+        "quiero saber todo", "que sabes", "explicame el modulo",
+        "que puedes hacer", "que eres capaz",
+    ]
+    _VAGUE_REPLY = (
+        "¡Eso es mucho! 😅 Para ayudarte mejor, ¿podrías concretar un poco más? Por ejemplo:\n"
+        "- ¿Quieres saber sobre hardware (placa base, procesador, RAM...)?\n"
+        "- ¿Sobre electricidad (corriente, voltaje, circuitos...)?\n"
+        "- ¿Sobre sistemas operativos e instalación?\n"
+        "- ¿Sobre mantenimiento y limpieza del equipo?"
+    )
+
     def detect_special_question(self, question: str) -> dict | None:
+        import random
         normalized = normalize_question(question)
+
         for trigger in self._WHO_AM_I_TRIGGERS:
             if trigger in normalized:
                 return {"answer": self._WHO_AM_I_REPLY, "sources": self._SPECIAL_SOURCE}
         for trigger in self._CREATORS_TRIGGERS:
             if trigger in normalized:
                 return {"answer": self._CREATORS_REPLY, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._GREETING_TRIGGERS:
+            if normalized.strip() == trigger or normalized.startswith(trigger + " ") or normalized == trigger:
+                reply = random.choice(self._GREETING_REPLIES)
+                return {"answer": reply, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._THANKS_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._THANKS_REPLY, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._VAGUE_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._VAGUE_REPLY, "sources": self._SPECIAL_SOURCE}
         return None
 
     # ── Public API ───────────────────────────────────────────────────────── #
 
     def ask(self, question: str, context: list[str] | None = None, user_id: str | None = None) -> dict:
+        from app.services.cache_service import cache_service
+
+        # Injection check
+        if is_injection_attempt(question):
+            return {
+                "answer": "Esa pregunta no puedo responderla. Prueba con algo relacionado con el temario. 😊",
+                "sources": self._SPECIAL_SOURCE,
+                "related_question": None,
+            }
+
+        # Hardcoded
         special = self.detect_special_question(question)
         if special:
-            return special
+            return {**special, "related_question": None}
+
+        # Calculator
+        calc = calculator_service.calculate(question)
+        if calc:
+            return {**calc, "related_question": None}
+
+        # Cache
+        cached = cache_service.get(question)
+        if cached:
+            return {**cached, "from_cache": True}
 
         matches = self.retrieve_context(question)
-        answer = self.generate_answer(question, matches)
+        raw_answer = self.generate_answer(question, matches)
+
+        # Extract related question if Groq included it
+        related_question = None
+        answer = raw_answer
+        marker = "💡 **También podrías preguntarme:**"
+        if marker in raw_answer:
+            parts = raw_answer.split(marker, 1)
+            answer = parts[0].strip()
+            related_question = parts[1].strip() if len(parts) > 1 else None
 
         seen: set[str] = set()
         sources = []
@@ -349,7 +481,13 @@ class RagService:
                     "version": m["book"]["version"],
                 })
 
-        return {"answer": answer, "sources": sources}
+        result = {"answer": answer, "sources": sources, "related_question": related_question}
+
+        # Cache only successful answers
+        if matches and "no está disponible" not in answer and "no tengo información" not in answer.lower():
+            cache_service.set(question, result)
+
+        return result
 
 
 rag_service = RagService()

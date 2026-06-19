@@ -7,6 +7,7 @@ from app.utils.text_utils import (
     get_search_variants,
     extract_keywords,
     is_list_question,
+    is_injection_attempt,
     normalize_question,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "get_search_variants",
     "extract_keywords",
     "is_list_question",
+    "is_injection_attempt",
     "normalize_question",
 ]

@@ -17,6 +17,7 @@ LIST_TRIGGERS: set[str] = {
 }
 
 SYNONYMS: dict[str, list[str]] = {
+    # Electricidad
     "voltaje":      ["voltaje", "voltage", "tension", "potencial"],
     "voltage":      ["voltage", "voltaje", "tension", "potencial"],
     "corriente":    ["corriente", "current", "intensidad"],
@@ -34,33 +35,61 @@ SYNONYMS: dict[str, list[str]] = {
     "voltio":       ["voltio", "volt", "voltaje"],
     "dc":           ["dc", "corriente continua", "direct current"],
     "ac":           ["ac", "corriente alterna", "alternating current"],
-    "cpu":          ["cpu", "procesador", "unidad central"],
-    "procesador":   ["procesador", "cpu"],
-    "ram":          ["ram", "memoria ram"],
-    "ssd":          ["ssd", "solid state", "estado solido"],
-    "hdd":          ["hdd", "disco duro", "hard disk"],
-    "gpu":          ["gpu", "tarjeta grafica", "grafica"],
-    "mobo":         ["mobo", "placa base", "motherboard"],
-    "mb":           ["mb", "placa base", "motherboard"],
-    "atx":          ["atx", "advanced technology"],
-    "uefi":         ["uefi", "firmware"],
-    "bios":         ["bios", "firmware", "basic input output"],
-    "pcie":         ["pcie", "pci express"],
-    "usb":          ["usb", "universal serial bus"],
-    "alu":          ["alu", "unidad aritmetico logica"],
-    "io":           ["io", "entrada salida", "input output"],
+    "frecuencia":   ["frecuencia", "frequency", "hz", "hertz"],
+    "circuito":     ["circuito", "circuit"],
     "conductor":    ["conductor", "conductora", "conductividad"],
     "aislante":     ["aislante", "aislamiento", "aislador"],
     "semiconductor": ["semiconductor"],
-    "circuito":     ["circuito", "circuit"],
     "electrodo":    ["electrodo", "electrode"],
-    "frecuencia":   ["frecuencia", "frequency", "hz", "hertz"],
+    "transformador": ["transformador", "transformer"],
+    # Hardware / componentes
+    "cpu":          ["cpu", "procesador", "microprocesador", "unidad central"],
+    "procesador":   ["procesador", "cpu", "microprocesador"],
+    "ram":          ["ram", "memoria ram", "memoria principal"],
+    "memoria":      ["memoria", "ram", "almacenamiento temporal"],
+    "ssd":          ["ssd", "solid state", "estado solido", "unidad solida"],
+    "hdd":          ["hdd", "disco duro", "hard disk", "disco mecanico"],
+    "disco":        ["disco", "hdd", "ssd", "almacenamiento"],
+    "gpu":          ["gpu", "tarjeta grafica", "grafica", "video"],
+    "mobo":         ["mobo", "placa base", "motherboard"],
+    "mb":           ["mb", "placa base", "motherboard"],
     "placa":        ["placa base", "placa", "motherboard", "mainboard"],
-    "socket":       ["socket", "zocalo"],
-    "chipset":      ["chipset", "chip"],
-    "dimm":         ["dimm", "ranura ram", "slot ram"],
-    "sata":         ["sata", "serial ata"],
-    "nvme":         ["nvme", "m.2", "m2"],
+    "motherboard":  ["motherboard", "placa base", "placa madre"],
+    "fuente":       ["fuente de alimentacion", "fuente", "psu", "power supply"],
+    "psu":          ["psu", "fuente de alimentacion", "fuente"],
+    "cooler":       ["cooler", "disipador", "ventilador", "refrigeracion"],
+    "disipador":    ["disipador", "cooler", "ventilador", "refrigeracion"],
+    "caja":         ["caja", "chasis", "torre", "gabinete", "case"],
+    "chasis":       ["chasis", "caja", "torre", "gabinete"],
+    "socket":       ["socket", "zocalo", "ranura procesador"],
+    "chipset":      ["chipset", "chip", "controlador"],
+    "dimm":         ["dimm", "ranura ram", "slot ram", "modulo ram"],
+    "sata":         ["sata", "serial ata", "conector sata"],
+    "nvme":         ["nvme", "m.2", "m2", "pcie ssd"],
+    "pcie":         ["pcie", "pci express", "ranura expansion"],
+    "usb":          ["usb", "universal serial bus", "conector usb"],
+    "hdmi":         ["hdmi", "salida video", "video digital"],
+    "bios":         ["bios", "uefi", "firmware", "basic input output"],
+    "uefi":         ["uefi", "bios", "firmware"],
+    "alu":          ["alu", "unidad aritmetico logica"],
+    "io":           ["io", "entrada salida", "input output"],
+    "atx":          ["atx", "advanced technology", "factor forma"],
+    # Montaje y mantenimiento
+    "montar":       ["montar", "ensamblar", "armar", "construir", "instalar componentes"],
+    "ensamblar":    ["ensamblar", "montar", "armar", "construir"],
+    "instalar":     ["instalar", "montar", "configurar", "poner"],
+    "mantenimiento": ["mantenimiento", "limpieza", "revision", "preventivo"],
+    "limpieza":     ["limpieza", "limpiar", "mantenimiento", "polvo"],
+    "herramienta":  ["herramienta", "destornillador", "utensilio"],
+    # Software / SO
+    "sistema operativo": ["sistema operativo", "so", "os", "windows", "linux"],
+    "so":           ["so", "sistema operativo", "os"],
+    "windows":      ["windows", "sistema operativo", "so"],
+    "linux":        ["linux", "sistema operativo", "so"],
+    "particion":    ["particion", "particiones", "formatear", "disco"],
+    "formatear":    ["formatear", "particion", "instalar so"],
+    "driver":       ["driver", "controlador", "software hardware"],
+    "controlador":  ["controlador", "driver", "software"],
 }
 
 
@@ -108,3 +137,17 @@ def normalize_question(text: str) -> str:
     result = re.sub(r"[^\w\s]", " ", result)
     result = re.sub(r"\s+", " ", result).strip()
     return result
+
+
+_INJECTION_PHRASES = [
+    "ignore previous", "ignore all", "forget everything", "forget all",
+    "act as", "you are now", "pretend you", "roleplay as", "jailbreak",
+    "ignore instrucciones", "olvida todo", "olvida las instrucciones",
+    "actua como", "ahora eres", "nuevo rol", "system:", "###", "<<<",
+    "prompt injection", "dan mode", "developer mode",
+]
+
+
+def is_injection_attempt(question: str) -> bool:
+    normalized = to_ascii(question.lower())
+    return any(phrase in normalized for phrase in _INJECTION_PHRASES)

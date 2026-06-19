@@ -37,3 +37,21 @@ class DeleteResponse(BaseResponse):
     """
     data: {deleted}
     """
+
+
+class FeedbackResponse(BaseResponse):
+    """
+    data: {recorded: true}
+    """
+
+
+class StatsResponse(BaseResponse):
+    """
+    data: {total, positive, negative, top_questions, today}
+    """
+
+
+class ResumenResponse(BaseResponse):
+    """
+    data: {unidad, resumen}
+    """
