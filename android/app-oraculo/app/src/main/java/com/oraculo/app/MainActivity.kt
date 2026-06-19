@@ -77,42 +77,98 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupInsets() {
         /*
-         * Este método mantiene el fondo animado intacto.
+         * Objetivo del método:
          *
-         * Importante:
-         * - No aplicamos padding al root "main"
-         * - El fondo animado sigue ocupando toda la pantalla
-         * - El contenido respeta barras del sistema
-         * - La caja inferior sube cuando aparece el teclado
+         * - Mantener el fondo animado ocupando toda la pantalla.
+         * - No aplicar padding al root main, porque eso puede recortar el fondo.
+         * - Aplicar padding solo al contenido principal.
+         * - Mover la barra inferior composerContainer para que respete:
+         *   1. móviles con gestos
+         *   2. móviles con botones inferiores
+         *   3. teclado abierto
          */
 
+        /*
+         * Root de la pantalla.
+         * Se usa solo para escuchar los insets del sistema.
+         */
         val rootView: View = findViewById(R.id.main)
 
-        ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
+        /*
+         * Contenedor principal del contenido.
+         * Aquí sí aplicamos padding para respetar barra superior, notch y navegación.
+         */
+        val contentView: View = findViewById(R.id.contentContainer)
+
+        /*
+         * Barra inferior de escritura.
+         * Esta barra se moverá dinámicamente sobre teclado o botones del sistema.
+         */
+        val composerView: View = findViewById(R.id.composerContainer)
+
+        /*
+         * Listener de insets del sistema.
+         * Se ejecuta cuando cambian barras del sistema o teclado.
+         */
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, windowInsets ->
 
             /*
              * Insets de barras del sistema:
-             * status bar, navigation bar y zonas seguras del sistema.
+             * - status bar
+             * - navigation bar
+             * - botones inferiores si el dispositivo los usa
              */
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
 
             /*
              * Insets del teclado.
-             * Cuando el teclado aparece, imeInsets.bottom representa su altura.
+             * Si el teclado está cerrado, normalmente bottom será 0.
+             * Si el teclado está abierto, bottom será la altura del teclado.
              */
-            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val imeBars = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
 
             /*
-             * Altura real del teclado.
-             * Restamos systemBars.bottom para evitar sumar dos veces la barra de navegación.
+             * Altura de la barra de navegación inferior.
+             * En dispositivos con gestos suele ser pequeña.
+             * En dispositivos con botones inferiores puede ser más grande.
              */
-            val keyboardHeight = max(0, imeInsets.bottom - systemBars.bottom)
+            val navigationBarHeight = systemBars.bottom
+
+            /*
+             * Altura reportada por el teclado.
+             */
+            val keyboardHeight = imeBars.bottom
+
+            /*
+             * Detecta si el teclado está realmente visible.
+             * Si keyboardHeight es mayor que navigationBarHeight, asumimos teclado abierto.
+             */
+            val isKeyboardVisible = keyboardHeight > navigationBarHeight
+
+            /*
+             * Espacio inferior que debe respetar la barra de escritura.
+             *
+             * Si el teclado está abierto:
+             * - usamos keyboardHeight para subir la caja por encima del teclado.
+             *
+             * Si el teclado está cerrado:
+             * - usamos navigationBarHeight para no quedar debajo de los botones inferiores.
+             */
+            val bottomInset = if (isKeyboardVisible) {
+                keyboardHeight
+            } else {
+                navigationBarHeight
+            }
 
             /*
              * Padding del contenido principal.
-             * Se aplica solo al contentContainer para no recortar el fondo animado.
+             *
+             * Importante:
+             * - se aplica solo al contentView
+             * - no se toca rootView
+             * - el fondo animado sigue ocupando toda la pantalla
              */
-            contentContainer.setPadding(
+            contentView.setPadding(
                 systemBars.left + 24.dpToPx(),
                 systemBars.top + 28.dpToPx(),
                 systemBars.right + 24.dpToPx(),
@@ -120,23 +176,42 @@ class MainActivity : AppCompatActivity() {
             )
 
             /*
-             * Movimiento de la barra inferior de mensaje.
+             * LayoutParams reales del composerView.
              *
-             * Si el teclado está cerrado:
-             * - keyboardHeight = 0
-             * - la barra queda con margen inferior normal
+             * Importante:
+             * Se usa composerView.layoutParams.
+             * No usar composerView.params.
+             * No usar getParams().
              *
-             * Si el teclado está abierto:
-             * - keyboardHeight > 0
-             * - la barra sube por encima del teclado
+             * Esto evita el error:
+             * ContextWrapper#getParams requires API 31.
              */
-            val composerParams = composerContainer.layoutParams as ViewGroup.MarginLayoutParams
-            composerParams.leftMargin = 16.dpToPx()
-            composerParams.rightMargin = 16.dpToPx()
-            composerParams.bottomMargin = keyboardHeight + 16.dpToPx()
-            composerContainer.layoutParams = composerParams
+            val composerLayoutParams =
+                composerView.layoutParams as ViewGroup.MarginLayoutParams
 
-            insets
+            /*
+             * Márgenes laterales fijos.
+             */
+            composerLayoutParams.leftMargin = 16.dpToPx()
+            composerLayoutParams.rightMargin = 16.dpToPx()
+
+            /*
+             * Margen inferior dinámico.
+             *
+             * - con teclado abierto: sube sobre el teclado
+             * - con teclado cerrado: respeta botones inferiores del sistema
+             */
+            composerLayoutParams.bottomMargin = bottomInset + 16.dpToPx()
+
+            /*
+             * Reasignamos los parámetros a la vista.
+             */
+            composerView.layoutParams = composerLayoutParams
+
+            /*
+             * Devolvemos los insets para que Android continúe el flujo normal.
+             */
+            windowInsets
         }
     }
 
