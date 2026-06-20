@@ -6,14 +6,15 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
+import com.google.gson.Gson
 
 object RetrofitClient {
 
     private val logging = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY
     }
-
-    private val client = OkHttpClient.Builder()
+// cambiamos de private val client a val client para que sea accesible desde el repository.
+    val client = OkHttpClient.Builder()
         .addInterceptor(logging)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -27,4 +28,5 @@ object RetrofitClient {
             .build()
             .create(OraculoApi::class.java)
     }
+    val gson = Gson()
 }

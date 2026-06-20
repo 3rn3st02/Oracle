@@ -153,7 +153,7 @@
             android:minHeight="48dp"
             android:background="@android:color/transparent"
             android:gravity="top|start"
-            android:hint="¿Qué Necesitas Saber?..."
+            android:hint="El destino tiene un precio por ser visto..."
             android:imeOptions="actionSend|flagNoExtractUi"
             android:inputType="textCapSentences|textMultiLine"
             android:maxLines="10"

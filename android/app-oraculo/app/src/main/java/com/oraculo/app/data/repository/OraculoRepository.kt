@@ -2,6 +2,13 @@ package com.oraculo.app.data.repository
 
 import com.oraculo.app.data.remote.dto.AskRequest
 import com.oraculo.app.data.remote.network.RetrofitClient
+import com.oraculo.app.data.remote.dto.AskStreamChunkDto
+import com.oraculo.app.data.remote.network.NetworkConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class OraculoRepository {
 
@@ -103,6 +110,126 @@ class OraculoRepository {
 
         } catch (exception: Exception) {
             Result.failure(exception)
+        }
+    }
+
+    // este bloque nos ayuda a implementar el efecto de pensando mientras se genera la respuesta
+    // dando un efecto mas natural, fluida y por fragmentos y no de golpe,
+    suspend fun askStream(
+        question: String,
+        onToken: suspend (String) -> Unit
+    ): Result<Unit> {
+        return withContext(Dispatchers.IO) {
+            try {
+                /*
+                 * URL del endpoint SSE.
+                 *
+                 * Se usa trimEnd('/') para evitar doble slash si BASE_URL ya termina en '/'.
+                 */
+                val streamUrl = NetworkConfig.BASE_URL.trimEnd('/') + "/ask/stream"
+
+                /*
+                 * Request body compatible con contrato cloud actual.
+                 */
+                val jsonBody = RetrofitClient.gson.toJson(
+                    AskRequest(
+                        question = question,
+                        language = "es",
+                        top_k = 3
+                    )
+                )
+
+                /*
+                 * Body JSON para POST.
+                 */
+                val requestBody = jsonBody.toRequestBody(
+                    "application/json; charset=utf-8".toMediaType()
+                )
+
+                /*
+                 * Request SSE.
+                 *
+                 * Accept: text/event-stream le indica al backend que esperamos streaming.
+                 */
+                val request = Request.Builder()
+                    .url(streamUrl)
+                    .post(requestBody)
+                    .addHeader("Accept", "text/event-stream")
+                    .addHeader("Content-Type", "application/json; charset=utf-8")
+                    .build()
+
+                /*
+                 * Ejecutamos llamada usando OkHttp directo.
+                 */
+                RetrofitClient.client.newCall(request).execute().use { response ->
+
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            Exception("HTTP ${response.code} en /ask/stream")
+                        )
+                    }
+
+                    val responseBody = response.body
+                        ?: return@withContext Result.failure(
+                            Exception("Respuesta vacía en /ask/stream")
+                        )
+
+                    /*
+                     * Leemos línea por línea.
+                     *
+                     * Soporta:
+                     * - formato SSE: data: {"token":"...","done":false}
+                     * - formato JSON por línea: {"token":"...","done":false}
+                     */
+                    responseBody.charStream().buffered().useLines { lines ->
+                        for (rawLine in lines) {
+                            val line = rawLine.trim()
+
+                            if (line.isBlank()) {
+                                continue
+                            }
+
+                            val payload = when {
+                                line.startsWith("data:") -> {
+                                    line.removePrefix("data:").trim()
+                                }
+
+                                line.startsWith("{") -> {
+                                    line
+                                }
+
+                                else -> {
+                                    continue
+                                }
+                            }
+
+                            if (payload == "[DONE]") {
+                                break
+                            }
+
+                            val chunk = RetrofitClient.gson.fromJson(
+                                payload,
+                                AskStreamChunkDto::class.java
+                            )
+
+                            if (chunk.done) {
+                                break
+                            }
+
+                            val token = chunk.token
+
+                            if (!token.isNullOrEmpty()) {
+                                onToken(token)
+                            }
+                        }
+                    }
+                }
+
+                Result.success(Unit)
+
+            } catch (exception: Exception) {
+                Result.failure(exception)
+            }
         }
     }
 }

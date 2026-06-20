@@ -19,6 +19,8 @@ import com.oraculo.app.data.repository.OraculoRepository
 import com.oraculo.app.ui.views.NightChatBackgroundView
 import kotlinx.coroutines.launch
 import kotlin.math.max
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -246,7 +248,7 @@ class MainActivity : AppCompatActivity() {
             healthResult
                 .onSuccess { message ->
                     Log.d("ORACULO_API", "HEALTH OK: $message")
-                    textBackendStatus.text = "Backend: conectado correctamente"
+                    textBackendStatus.text = "Conectado correctamente al Oraculo de Delfos"
                 }
                 // Mensaje cuando no logra establecer coneccion
                 .onFailure { error ->
@@ -261,31 +263,79 @@ class MainActivity : AppCompatActivity() {
         val question = editQuestion.text.toString().trim()
 
         if (question.isBlank()) {
-            textAnswer.text = "Escribe una pregunta antes de enviar."
+            textAnswer.text = "No hay respuestas correctas para preguntas equivocadas"
             return
         }
 
         lifecycleScope.launch {
+            /*
+             * Activamos estado de carga.
+             */
             setLoading(true)
 
-            textQuestion.text = "Pregunta: $question"
-            textAnswer.text = "Consultando ORACLE..."
+            /*
+             * Mostramos pregunta enviada.
+             */
+            textQuestion.text = "No mires mis ojos, mira el espacio que hay entre nosotros, ahí es donde vive tu respuesta sobre: $question"
 
-            Log.d("ORACULO_API", "Enviando pregunta: $question")
+            /*
+             * Estado inicial mientras llega el primer token.
+             * Esto se puede reemplazar más adelante por animación personalizada.
+             */
+            textAnswer.text = "La respuesta que buscas no te dejara en paz, solo te dara una responsabilidad mas grande."
 
-            val askResult = repository.ask(question)
+            /*
+             * Limpiamos input inmediatamente para mejorar UX tipo chat.
+             */
+            editQuestion.text.clear()
 
-            askResult
-                .onSuccess { answer ->
-                    Log.d("ORACULO_API", "ASK OK: $answer")
-                    textAnswer.text = answer
-                    editQuestion.text.clear()
+            /*
+             * Buffer local donde se va construyendo la respuesta token a token.
+             */
+            val answerBuilder = StringBuilder()
+
+            /*
+             * Controla si ya llegó el primer token.
+             */
+            var firstTokenReceived = false
+
+            Log.d("ORACULO_API", "Colsuntando al oráculo de Delfos : $question")
+
+            val streamResult = repository.askStream(question) { token ->
+                /*
+                 * El stream corre en Dispatchers.IO desde el Repository.
+                 * Para actualizar UI, volvemos al Main thread.
+                 */
+                withContext(Dispatchers.Main) {
+                    if (!firstTokenReceived) {
+                        firstTokenReceived = true
+                        textAnswer.text = ""
+                    }
+
+                    answerBuilder.append(token)
+                    textAnswer.text = answerBuilder.toString()
                 }
-                .onFailure { error ->
-                    Log.e("ORACULO_API", "ASK ERROR: ${error.message}", error)
-                    textAnswer.text = "Error al consultar la IA.\n\nDetalle: ${error.message}"
-                }
+            }
 
+            /*
+             * Si el stream falla, mostramos error controlado.
+             */
+            streamResult.onFailure { error ->
+                Log.e("ORACULO_API", "STREAM ERROR: ${error.message}", error)
+
+                textAnswer.text = "Error al consultar en Delfos.\n\nDetalle: ${error.message}"
+            }
+
+            /*
+             * Si terminó sin tokens, dejamos mensaje controlado.
+             */
+            if (streamResult.isSuccess && answerBuilder.isBlank()) {
+                textAnswer.text = "No hay respuestas correctas para preguntas equivocadas"
+            }
+
+            /*
+             * Cerramos estado de carga.
+             */
             setLoading(false)
         }
     }
