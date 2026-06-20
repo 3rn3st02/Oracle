@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.oraculo.app.ui.chat.OracleHintProvider
 
 class MainActivity : AppCompatActivity() {
 
@@ -45,13 +46,17 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         bindViews()
+        setupDynamicInputHint()
         setupInsets()
         setupListeners()
         checkBackendHealth()
 
+
         Log.d("ORACULO_API", "MainActivity iniciada")
         Log.d("ORACULO_API", "BASE_URL actual: ${NetworkConfig.BASE_URL}")
     }
+
+
 
     override fun onResume() {
         super.onResume()
@@ -76,7 +81,16 @@ class MainActivity : AppCompatActivity() {
         textQuestion = findViewById(R.id.textQuestion)
         textAnswer = findViewById(R.id.textAnswer)
     }
-
+    private fun setupDynamicInputHint() {
+        /*
+         * Asigna una frase aleatoria como hint del campo de texto.
+         *
+         * Se ejecuta una vez al iniciar la Activity.
+         * No modifica el texto real del EditText.
+         * Solo cambia el placeholder visual.
+         */
+        editQuestion.hint = OracleHintProvider.getRandomHint()
+    }
     private fun setupInsets() {
         /*
          * Objetivo del método:
