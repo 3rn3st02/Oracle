@@ -1,6 +1,30 @@
 import json
+import math
 import re
 from pathlib import Path
+from typing import AsyncGenerator
+
+from groq import AsyncGroq, Groq
+
+from app.core.config import get_settings
+from app.services.calculator_service import calculator_service
+from app.utils.text_utils import (
+    extract_keywords,
+    get_search_variants,
+    is_injection_attempt,
+    is_list_question,
+    normalize_question,
+    to_ascii,
+)
+
+MAX_CONTEXT_SECTIONS = 6
+TOP_CANDIDATES = 5
+
+NO_CONTEXT_REPLY = (
+    "Todavía no he estudiado eso, pero puedo intentar ayudarte con lo que sé "
+    "del módulo de Montaje y Mantenimiento de Sistemas Microinformáticos. "
+    "Prueba a preguntarme sobre hardware, electricidad, sistemas operativos o mantenimiento. 🙂"
+)
 
 
 class RagService:
@@ -8,42 +32,36 @@ class RagService:
         self.base_path = Path(__file__).resolve().parents[2]
         self.processed_path = self.base_path / "data" / "processed"
         self.metadata_path = self.base_path / "data" / "books_metadata.json"
+        settings = get_settings()
+        self._groq = Groq(api_key=settings.groq_api_key) if settings.groq_api_key else None
+        self._groq_async = AsyncGroq(api_key=settings.groq_api_key) if settings.groq_api_key else None
 
-    def is_initialized(self) -> bool:
-        return True
+    # ── Metadata & text loading ──────────────────────────────────────────── #
+
+    def docs_count(self) -> int:
+        books = self.load_books_metadata()
+        return sum(1 for b in books if (self.processed_path / b["filename"]).exists())
 
     def load_books_metadata(self) -> list:
         if not self.metadata_path.exists():
             return []
-
         return json.loads(self.metadata_path.read_text(encoding="utf-8"))
 
     def load_book_text(self, filename: str) -> str:
         file_path = self.processed_path / filename
-
         if not file_path.exists():
             return ""
-
         return file_path.read_text(encoding="utf-8", errors="ignore")
 
-    def strip_front_matter(self, text: str) -> str:
-        """
-        Intenta saltar portada e índice buscando la segunda aparición de
-        '1. Introducción', que suele marcar el inicio real del contenido.
-        """
-        markers = ["1. Introducción", "1. Introduccion"]
+    # ── Text normalization ───────────────────────────────────────────────── #
 
-        for marker in markers:
+    def strip_front_matter(self, text: str) -> str:
+        for marker in ("1. Introducción", "1. Introduccion"):
             first = text.find(marker)
             if first == -1:
                 continue
-
             second = text.find(marker, first + len(marker))
-            if second != -1:
-                return text[second:]
-
-            return text[first:]
-
+            return text[second:] if second != -1 else text[first:]
         return text
 
     def normalize_text(self, text: str) -> str:
@@ -53,241 +71,423 @@ class RagService:
         text = re.sub(r"\n{2,}", "\n\n", text)
         return text.strip()
 
-    def split_into_chunks(self, text: str, chunk_size: int = 1000) -> list:
-        text = self.normalize_text(text)
+    # ── Section splitting ────────────────────────────────────────────────── #
 
+    _HEADING = re.compile(r"^(\d+(?:\.\d+)*)\.?\s+\S")
+
+    def split_into_sections(self, text: str) -> list[dict]:
+        text = self.normalize_text(text)
         if not text:
             return []
-
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-        chunks = []
-        current = ""
-
-        for paragraph in paragraphs:
-            if len(current) + len(paragraph) + 2 <= chunk_size:
-                current = f"{current}\n\n{paragraph}".strip()
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        groups: list[list[str]] = []
+        current: list[str] = []
+        for line in lines:
+            if self._HEADING.match(line) and current:
+                groups.append(current)
+                current = [line]
             else:
-                if current:
-                    chunks.append(current)
-                current = paragraph
-
+                current.append(line)
         if current:
-            chunks.append(current)
+            groups.append(current)
+        return [self._build_section(g) for g in groups]
 
-        return chunks
+    def _build_section(self, lines: list[str]) -> dict:
+        first = lines[0]
+        text = " ".join(lines).strip()
+        m = re.match(r"^(\d+(?:\.\d+)*)\.?\s+(.*)", first)
+        if m:
+            heading = m.group(1)
+            title = m.group(2).strip()[:80]
+        else:
+            heading = ""
+            title = first[:80]
+        level = heading.count(".") + 1 if heading else 0
+        parent = ".".join(heading.split(".")[:-1]) if "." in heading else ""
+        return {"heading": heading, "title": title, "text": text, "level": level, "parent": parent}
 
-    def extract_keywords(self, question: str) -> list:
-        stopwords = {
-            "que", "qué", "dice", "libro", "antiguo", "nuevo", "sobre",
-            "del", "los", "las", "una", "uno", "unos", "unas", "para",
-            "como", "cómo", "cual", "cuál", "cuáles", "cuando", "donde",
-            "el", "la", "de", "en", "por", "con", "sin", "al", "se",
-            "es", "son", "un", "cuales", "cuál"
-        }
+    # ── Noise detection ──────────────────────────────────────────────────── #
 
-        words = re.findall(r"\w+", question.lower())
-        keywords = [word for word in words if len(word) > 3 and word not in stopwords]
+    def is_noise_section(self, section: dict) -> bool:
+        text = section["text"]
+        return len(text.strip()) < 80 or sum(ch.isalpha() for ch in text) < 40
 
-        extras = [
-            "montaje", "mantenimiento", "equipos", "sistemas", "circuito",
-            "eléctrico", "electrico", "serie", "paralelo", "arquitectura",
-            "neumann", "unidades", "funcionales", "ordenador", "ssd",
-            "placa", "base", "memoria", "puertos", "audio", "vídeo", "video"
-        ]
+    # ── Scoring ─────────────────────────────────────────────────────────── #
 
-        question_lower = question.lower()
-        for extra in extras:
-            if extra in question_lower:
-                keywords.append(extra)
+    def _compute_idf(self, keywords: list[str], sections: list[dict]) -> dict[str, float]:
+        N = max(len(sections), 1)
+        idf: dict[str, float] = {}
+        for kw in keywords:
+            variants = get_search_variants(kw)
+            df = sum(
+                1 for s in sections
+                if any(v in to_ascii(s["text"].lower()) for v in variants)
+            )
+            idf[kw] = math.log((N + 1) / (df + 1)) + 1
+        return idf
 
-        seen = set()
-        unique_keywords = []
-        for word in keywords:
-            if word not in seen:
-                seen.add(word)
-                unique_keywords.append(word)
+    def score_section(self, keywords: list[str], question: str, section: dict,
+                      is_list_q: bool = False, idf: dict | None = None) -> float:
+        text_ascii = to_ascii(section["text"].lower())
+        title_ascii = to_ascii(section["title"].lower())
+        score = 0.0
 
-        return unique_keywords
+        for kw in keywords:
+            weight = idf[kw] if idf else 1.0
+            for variant in get_search_variants(kw):
+                count = text_ascii.count(variant)
+                if count > 0:
+                    score += (2 + min(count - 1, 3)) * weight
+                    if variant in title_ascii:
+                        score += 3 * weight
+                    break
 
-    def is_noise_chunk(self, chunk: str) -> bool:
-        chunk_lower = chunk.lower()
+        q_ascii = to_ascii(question.lower())
+        q_kws = [w for w in re.findall(r"\w+", q_ascii) if len(w) >= 3]
+        for i in range(len(q_kws) - 1):
+            if q_kws[i] + " " + q_kws[i + 1] in text_ascii:
+                score += 4.0
 
-        noise_patterns = [
-            "índice",
-            "práctica profesional",
-            "ficha de trabajo",
-            "editex",
-            "formación profesional básica",
-            "informática y comunicaciones",
-            "informática de oficina",
-            "caso práctico inicial",
-            "situación de partida",
-            "pctown",
-            "lorena trabaja",
-            "descuento a los clientes"
-        ]
-
-        if len(chunk.strip()) < 80:
-            return True
-
-        if sum(char.isalpha() for char in chunk) < 40:
-            return True
-
-        if any(pattern in chunk_lower for pattern in noise_patterns):
-            return True
-
-        return False
-
-    def score_chunk(self, keywords: list, chunk: str) -> int:
-        chunk_lower = chunk.lower()
-        score = 0
-
-        for keyword in keywords:
-            if keyword in chunk_lower:
-                score += 2
-
-        important_terms = [
-            "montaje", "mantenimiento", "equipos", "sistemas", "circuito",
-            "eléctrico", "serie", "paralelo", "arquitectura", "neumann",
-            "funcionales", "ordenador", "ssd", "placa", "base"
-        ]
-        score += sum(1 for term in important_terms if term in chunk_lower)
+        if is_list_q:
+            list_items = len(re.findall(r"(?:^|\s)(?:\d+[\.\)]\s|[A-Z][\.\)]\s)", section["text"]))
+            score += min(list_items * 2, 8)
 
         return score
 
-    def extract_window_from_lines(self, lines: list, targets: list[str], window: int = 8) -> str:
-        for i, line in enumerate(lines):
-            line_lower = line.lower()
-            if any(target in line_lower for target in targets):
-                selected = []
-                for j in range(i, min(len(lines), i + window)):
-                    current = lines[j].strip()
-                    if current:
-                        selected.append(current)
+    # ── Noise marker removal ─────────────────────────────────────────────── #
 
-                chunk = " ".join(selected).strip()
-                if chunk:
-                    return chunk
+    def remove_noise_markers(self, text: str) -> str:
+        text_lower = text.lower()
+        for marker in (
+            "caso práctico inicial", "caso practico inicial",
+            "práctica profesional", "ficha de trabajo", "situación de partida",
+        ):
+            pos = text_lower.find(marker)
+            if pos != -1:
+                return text[:pos].strip()
+        return text
 
-        return ""
+    # ── Context retrieval ────────────────────────────────────────────────── #
 
-    def retrieve_context(self, question: str) -> dict | None:
+    def retrieve_context(self, question: str) -> list[dict]:
         books = self.load_books_metadata()
-        keywords = self.extract_keywords(question)
-        exact_question = question.lower()
+        keywords = extract_keywords(question)
+        is_list_q = is_list_question(question)
 
-        best_match = None
-        best_score = 0
+        if not keywords:
+            return []
+
+        book_data: dict[str, tuple[list[dict], dict]] = {}
+        scored: list[dict] = []
 
         for book in books:
             text = self.load_book_text(book["filename"])
             if not text:
                 continue
+            sections = self.split_into_sections(text)
+            book_data[book["filename"]] = (sections, book)
+            valid = [s for s in sections if not self.is_noise_section(s)]
+            idf = self._compute_idf(keywords, valid)
+            for section in valid:
+                score = self.score_section(keywords, question, section, is_list_q, idf)
+                if score >= 5:
+                    scored.append({"section": section, "book": book, "score": score})
 
-            text = self.normalize_text(text)
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            chunks = self.split_into_chunks(text)
+        if not scored:
+            return []
 
-            # Reglas exactas prioritarias para conceptos que ya has probado
-            if "circuito eléctrico" in exact_question or "circuito electrico" in exact_question:
-                chunk = self.extract_window_from_lines(
-                    lines,
-                    ["un circuito eléctrico es", "un circuito electrico es"],
-                    window=3
-                )
-                if chunk:
-                    return {"chunk": chunk, "book": book}
+        scored.sort(key=lambda x: x["score"], reverse=True)
 
-            if "circuito en serie" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["circuito en serie"], window=3)
-                if chunk:
-                    return {"chunk": chunk, "book": book}
+        # Diversidad: máximo 2 secciones por libro en los candidatos
+        top: list[dict] = []
+        book_counts: dict[str, int] = {}
+        for item in scored:
+            fname = item["book"]["filename"]
+            if book_counts.get(fname, 0) < 2:
+                top.append(item)
+                book_counts[fname] = book_counts.get(fname, 0) + 1
+            if len(top) >= TOP_CANDIDATES:
+                break
 
-            if "circuito en paralelo" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["circuito en paralelo"], window=3)
-                if chunk:
-                    return {"chunk": chunk, "book": book}
+        children_of: dict[str, dict[str, list[dict]]] = {}
+        for fname, (sections, _) in book_data.items():
+            index: dict[str, list[dict]] = {}
+            for s in sections:
+                if s["parent"]:
+                    index.setdefault(s["parent"], []).append(s)
+            children_of[fname] = index
 
-            if "von neumann" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["von neumann"], window=12)
-                if chunk and "índice" not in chunk.lower():
-                    return {"chunk": chunk, "book": book}
+        result: list[dict] = []
+        seen: set[str] = set()
 
-            if "unidades funcionales" in exact_question:
-                chunk = self.extract_window_from_lines(
-                    lines,
-                    ["unidades funcionales de un ordenador", "unidades funcionales"],
-                    window=12
-                )
-                if chunk and "índice" not in chunk.lower():
-                    return {"chunk": chunk, "book": book}
+        for item in top:
+            sec = item["section"]
+            book = item["book"]
+            heading = sec["heading"]
+            fname = book["filename"]
+            key = f"{fname}:{heading}"
 
-            if "placa base" in exact_question:
-                chunk = self.extract_window_from_lines(lines, ["placa base"], window=8)
-                if chunk and "caso práctico inicial" not in chunk.lower() and "lorena trabaja" not in chunk.lower():
-                    return {"chunk": chunk, "book": book}
+            if key not in seen:
+                seen.add(key)
+                result.append({"chunk": sec["text"], "book": book, "score": item["score"]})
 
-            # Búsqueda general por puntuación
-            for chunk in chunks:
-                if self.is_noise_chunk(chunk):
-                    continue
+            for child in children_of.get(fname, {}).get(heading, [])[:3]:
+                child_key = f"{fname}:{child['heading']}"
+                if child_key not in seen and not self.is_noise_section(child):
+                    seen.add(child_key)
+                    result.append({"chunk": child["text"], "book": book, "score": 0})
 
-                score = self.score_chunk(keywords, chunk)
+            if sec["parent"]:
+                siblings = [
+                    x for x in scored
+                    if x["section"]["parent"] == sec["parent"]
+                    and x["book"]["filename"] == fname
+                    and f"{fname}:{x['section']['heading']}" not in seen
+                ]
+                for sib in siblings[:2]:
+                    sib_key = f"{fname}:{sib['section']['heading']}"
+                    seen.add(sib_key)
+                    result.append({"chunk": sib["section"]["text"], "book": book, "score": sib["score"]})
 
-                if score > best_score:
-                    best_score = score
-                    best_match = {
-                        "chunk": chunk,
-                        "book": book
-                    }
+            if len(result) >= MAX_CONTEXT_SECTIONS:
+                break
 
-        # Si la coincidencia es demasiado mala, se considera que no hay contexto útil
-        if best_score < 2:
-            return None
+        return result[:MAX_CONTEXT_SECTIONS]
 
-        return best_match
+    # ── Answer generation ─────────────────────────────────────────────────── #
 
-    def generate_answer(self, question: str, match: dict | None) -> str:
-        if not match:
+    def generate_answer(self, question: str, matches: list[dict]) -> str:
+        if not matches:
+            return NO_CONTEXT_REPLY
+
+        if not self._groq:
             return (
-                f"No he encontrado todavía suficiente información relevante en los libros "
-                f"para responder con claridad a la pregunta: '{question}'."
+                "El servicio de IA no está configurado. "
+                "Añade GROQ_API_KEY al archivo .env para activarlo."
             )
 
-        chunk = match["chunk"].strip()
+        chunks = []
+        for i, m in enumerate(matches, 1):
+            chunk = self.remove_noise_markers(m["chunk"].strip())
+            chunk = re.sub(r"\s+", " ", chunk).strip()
+            chunks.append(f"[Fragmento {i}]\n{chunk}")
 
-        # Limpieza visual mínima
-        chunk = chunk.replace("= ", "")
-        chunk = re.sub(r"\s+", " ", chunk).strip()
-        chunk = re.sub(r"^\d+\.\s*", "", chunk)  # quita numeración inicial tipo "2."
-        chunk = chunk.strip(" .:")
+        context = "\n\n".join(chunks)
 
-        if not chunk:
-            return (
-                f"No he encontrado todavía suficiente información relevante en los libros "
-                f"para responder con claridad a la pregunta: '{question}'."
+        system_prompt = (
+            "Eres Oráculo, un asistente educativo del módulo 'Montaje y Mantenimiento de Sistemas Microinformáticos'. "
+            "Responde ÚNICAMENTE basándote en los fragmentos del libro proporcionados. "
+            "Reglas:\n"
+            "- Empieza con 'Basándome en lo que he aprendido, puedo decirte que...'\n"
+            "- Si la pregunta es sobre tipos, partes o pasos, usa listas o numeración.\n"
+            "- Respuestas cortas para preguntas simples, detalladas para conceptos complejos.\n"
+            "- Usa algún emoji ocasionalmente (📌 🔧 ⚡ 💡) para amenizar, pero sin abusar.\n"
+            "- Si la pregunta está en inglés, responde en español.\n"
+            "- Si los fragmentos no tienen información suficiente, responde exactamente: "
+            "'No tengo información suficiente en el temario para responder esto con precisión.'\n"
+            "- No inventes ni supongas nada que no esté en los fragmentos.\n"
+            "- Al final, añade una línea: '💡 **También podrías preguntarme:** [escribe una pregunta corta relacionada con el tema]'"
+        )
+
+        import time as _t
+        for _attempt in range(2):
+            try:
+                response = self._groq.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
+                    ],
+                    temperature=0.3,
+                    max_tokens=600,
+                    timeout=25,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error("Groq error (intento %d): %s", _attempt + 1, e)
+                if _attempt == 0:
+                    _t.sleep(5)
+        return "El servicio de IA no está disponible en este momento. Inténtalo de nuevo en unos segundos."
+
+    async def stream_answer(self, question: str, matches: list[dict]) -> AsyncGenerator[str, None]:
+        if not matches or not self._groq_async:
+            yield NO_CONTEXT_REPLY
+            return
+
+        chunks_text = []
+        for i, m in enumerate(matches, 1):
+            chunk = self.remove_noise_markers(m["chunk"].strip())
+            chunk = re.sub(r"\s+", " ", chunk).strip()
+            chunks_text.append(f"[Fragmento {i}]\n{chunk}")
+        context = "\n\n".join(chunks_text)
+
+        system_prompt = (
+            "Eres Oráculo, asistente educativo del módulo 'Montaje y Mantenimiento de Sistemas Microinformáticos'. "
+            "Responde ÚNICAMENTE con los fragmentos proporcionados. "
+            "Empieza con 'Basándome en lo que he aprendido, puedo decirte que...' "
+            "Usa listas cuando corresponda. Responde en español."
+        )
+        try:
+            stream = await self._groq_async.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
+                ],
+                temperature=0.3,
+                max_tokens=600,
+                stream=True,
             )
+            async for chunk in stream:
+                token = chunk.choices[0].delta.content or ""
+                if token:
+                    yield token
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("Groq stream error: %s", e)
+            yield "El servicio de IA no está disponible en este momento."
 
-        return f"{chunk}."
+    # ── Special hardcoded responses ──────────────────────────────────────── #
+
+    _SPECIAL_SOURCE = [{"source": "Oráculo Info", "label": "Oráculo Info", "version": "static"}]
+
+    _WHO_AM_I_TRIGGERS = [
+        "quien eres", "que eres", "presentate", "hablame de ti",
+        "como te llamas", "cual es tu nombre", "quien es oraculo",
+        "que es oraculo", "quien soy", "quien soy yo",
+    ]
+    _WHO_AM_I_REPLY = (
+        "¡Hola! Soy Oráculo 🤖, tu asistente del módulo de Montaje y Mantenimiento de Sistemas Microinformáticos. "
+        "Fui creado por Arandeitors y Archvaro, dos apasionados de la programación e informática. "
+        "Mi cerebro funciona en Python y mi interfaz en Kotlin. "
+        "Puedo ayudarte con hardware, electricidad, sistemas operativos y mantenimiento. ¿Qué quieres saber?"
+    )
+
+    _CREATORS_TRIGGERS = [
+        "quienes son los creadores", "quien te hizo", "quien os hizo",
+        "quien te creo", "quien os creo", "quienes te crearon",
+        "quienes son tus creadores", "quien hizo oraculo",
+        "quien te programo", "quien te diseno", "quien esta detras",
+        "los creadores", "tus creadores", "quien te desarrollo",
+    ]
+    _CREATORS_REPLY = (
+        "Archvaro — Guatemalteco de nacimiento, informático por elección. "
+        "El tipo que hace que las cosas funcionen.\n"
+        "Arandeitors — Vasco de origen, programador y fanático del Clash of Clans "
+        "y Kingdom Hearts. El que le da alma al código."
+    )
+
+    _GREETING_TRIGGERS = [
+        "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches",
+        "hey", "que tal", "ola", "saludos", "hi", "hello",
+    ]
+    _GREETING_REPLIES = [
+        "¡Hola! 👋 Soy Oráculo, tu asistente de Montaje y Mantenimiento. ¿En qué puedo ayudarte hoy?",
+        "¡Buenas! 😊 Estoy aquí para ayudarte con el módulo de Montaje y Mantenimiento. ¿Qué necesitas?",
+        "¡Hola! Cuéntame, ¿tienes alguna duda sobre el temario?",
+    ]
+
+    _THANKS_TRIGGERS = [
+        "gracias", "muchas gracias", "gracias por", "thank you", "thanks",
+        "perfecto gracias", "ok gracias", "vale gracias",
+    ]
+    _THANKS_REPLY = "¡De nada! 😊 Si tienes más dudas sobre el temario, aquí estaré."
+
+    _VAGUE_TRIGGERS = [
+        "explicame todo", "cuentame todo", "hablame de todo",
+        "quiero saber todo", "que sabes", "explicame el modulo",
+        "que puedes hacer", "que eres capaz",
+    ]
+    _VAGUE_REPLY = (
+        "¡Eso es mucho! 😅 Para ayudarte mejor, ¿podrías concretar un poco más? Por ejemplo:\n"
+        "- ¿Quieres saber sobre hardware (placa base, procesador, RAM...)?\n"
+        "- ¿Sobre electricidad (corriente, voltaje, circuitos...)?\n"
+        "- ¿Sobre sistemas operativos e instalación?\n"
+        "- ¿Sobre mantenimiento y limpieza del equipo?"
+    )
+
+    def detect_special_question(self, question: str) -> dict | None:
+        import random
+        normalized = normalize_question(question)
+
+        for trigger in self._WHO_AM_I_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._WHO_AM_I_REPLY, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._CREATORS_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._CREATORS_REPLY, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._GREETING_TRIGGERS:
+            if normalized.strip() == trigger or normalized.startswith(trigger + " ") or normalized == trigger:
+                reply = random.choice(self._GREETING_REPLIES)
+                return {"answer": reply, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._THANKS_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._THANKS_REPLY, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._VAGUE_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._VAGUE_REPLY, "sources": self._SPECIAL_SOURCE}
+        return None
+
+    # ── Public API ───────────────────────────────────────────────────────── #
 
     def ask(self, question: str, context: list[str] | None = None, user_id: str | None = None) -> dict:
-        match = self.retrieve_context(question)
-        answer = self.generate_answer(question, match)
+        from app.services.cache_service import cache_service
 
+        # Injection check
+        if is_injection_attempt(question):
+            return {
+                "answer": "Esa pregunta no puedo responderla. Prueba con algo relacionado con el temario. 😊",
+                "sources": self._SPECIAL_SOURCE,
+                "related_question": None,
+            }
+
+        # Hardcoded
+        special = self.detect_special_question(question)
+        if special:
+            return {**special, "related_question": None}
+
+        # Calculator
+        calc = calculator_service.calculate(question)
+        if calc:
+            return {**calc, "related_question": None}
+
+        # Cache
+        cached = cache_service.get(question)
+        if cached:
+            return {**cached, "from_cache": True}
+
+        matches = self.retrieve_context(question)
+        raw_answer = self.generate_answer(question, matches)
+
+        # Extract related question if Groq included it
+        related_question = None
+        answer = raw_answer
+        marker = "💡 **También podrías preguntarme:**"
+        if marker in raw_answer:
+            parts = raw_answer.split(marker, 1)
+            answer = parts[0].strip()
+            related_question = parts[1].strip() if len(parts) > 1 else None
+
+        seen: set[str] = set()
         sources = []
-        if match:
-            sources = [
-                {
-                    "source": match["book"]["filename"],
-                    "label": match["book"]["label"],
-                    "version": match["book"]["version"]
-                }
-            ]
+        for m in matches:
+            key = m["book"]["filename"]
+            if key not in seen:
+                seen.add(key)
+                sources.append({
+                    "source": m["book"]["filename"],
+                    "label": m["book"]["label"],
+                    "version": m["book"]["version"],
+                })
 
-        return {
-            "answer": answer,
-            "sources": sources
-        }
+        result = {"answer": answer, "sources": sources, "related_question": related_question}
+
+        # Cache only successful answers
+        if matches and "no está disponible" not in answer and "no tengo información" not in answer.lower():
+            cache_service.set(question, result)
+
+        return result
 
 
 rag_service = RagService()

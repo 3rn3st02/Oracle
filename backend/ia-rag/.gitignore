@@ -52,4 +52,5 @@ data/processed/*
  
 # -------- TEST CACHE --------
 .pytest_cache/
+tests/test_produccion.py
 
