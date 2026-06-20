@@ -29,9 +29,18 @@ class OraculoRepository {
     }
 
     // Se modifica estrura del contrato de respuestas para que sea compatible con el modelo de la API a partir
-    // de la v0.5-->
+    // de la v0.5 18/06/2026
+    // Se modifica estructura para compatibilidad con API v0.6 20/06/2026-->
     suspend fun ask(question: String): Result<String> {
         return try {
+            /*
+             * Request actual compatible con API cloud.
+             *
+             * El backend espera:
+             * - question
+             * - language
+             * - top_k
+             */
             val response = RetrofitClient.api.ask(
                 AskRequest(
                     question = question,
@@ -40,34 +49,57 @@ class OraculoRepository {
                 )
             )
 
-            if (response.isSuccessful) {
-                val body = response.body()
-
-                if (body?.status == "ok") {
-                    val answer = body.data?.answer ?: "Respuesta vacía"
-
-                    val sources = body.data?.sources ?: emptyList()
-
-                    val sourcesText = if (sources.isNotEmpty()) {
-                        sources.joinToString("\n") { sourceItem ->
-                            "- ${sourceItem.source}"
-                        }
-                    } else {
-                        "Sin fuentes reportadas"
-                    }
-
-                    Result.success(
-                        answer + "\n\nFuentes:\n" + sourcesText
-                    )
-                } else {
-                    Result.failure(
-                        Exception("Backend error: ${body?.error ?: "respuesta inválida"}")
-                    )
-                }
-
-            } else {
-                Result.failure(Exception("HTTP ${response.code()} en /ask"))
+            /*
+             * Si HTTP no fue exitoso, devolvemos error controlado.
+             */
+            if (!response.isSuccessful) {
+                return Result.failure(
+                    Exception("HTTP ${response.code()} en /ask")
+                )
             }
+
+            val body = response.body()
+
+            /*
+             * Validación del estado lógico del backend.
+             */
+            if (body?.status != "ok") {
+                return Result.failure(
+                    Exception("Backend error: ${body?.error ?: "respuesta inválida"}")
+                )
+            }
+
+            /*
+             * Nuevo contrato backend v0.6:
+             *
+             * response.data.answer
+             * response.data.related_question
+             * response.data.from_cache
+             *
+             * sources se ignora por indicación del backend.
+             */
+            val data = body.data
+
+            val answer = data?.answer?.trim()
+
+            if (answer.isNullOrBlank()) {
+                return Result.success("Respuesta vacía")
+            }
+
+            /*
+             * related_question es opcional.
+             *
+             * Solo se muestra si existe y no está vacío.
+             */
+            val relatedQuestion = data.related_question?.trim()
+
+            val finalText = if (!relatedQuestion.isNullOrBlank()) {
+                answer + "\n\nSugerencia:\n" + relatedQuestion
+            } else {
+                answer
+            }
+
+            Result.success(finalText)
 
         } catch (exception: Exception) {
             Result.failure(exception)
