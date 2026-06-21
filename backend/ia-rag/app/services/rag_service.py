@@ -256,7 +256,9 @@ class RagService:
 
     # ── Answer generation ─────────────────────────────────────────────────── #
 
-    def generate_answer(self, question: str, matches: list[dict]) -> str:
+    def generate_answer(
+        self, question: str, matches: list[dict], history: list[dict] | None = None
+    ) -> str:
         if not matches:
             return NO_CONTEXT_REPLY
 
@@ -289,15 +291,22 @@ class RagService:
             "- Al final, añade una línea: '💡 **También podrías preguntarme:** [escribe una pregunta corta relacionada con el tema]'"
         )
 
+        # Build messages with optional conversation history
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        for h in (history or []):
+            messages.append({"role": "user", "content": h["question"]})
+            messages.append({"role": "assistant", "content": h["answer"]})
+        messages.append({
+            "role": "user",
+            "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}",
+        })
+
         import time as _t
         for _attempt in range(2):
             try:
                 response = self._groq.chat.completions.create(
                     model="llama-3.1-8b-instant",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Fragmentos:\n\"\"\"\n{context}\n\"\"\"\n\nPregunta: {question}"},
-                    ],
+                    messages=messages,
                     temperature=0.3,
                     max_tokens=600,
                     timeout=25,
@@ -407,9 +416,43 @@ class RagService:
         "- ¿Sobre mantenimiento y limpieza del equipo?"
     )
 
+    _RESUMEN_RE = re.compile(
+        r"(?:resume(?:me)?\s+(?:la\s+)?|hazme\s+(?:un\s+)?(?:el\s+)?resumen\s+(?:de\s+)?(?:la\s+)?|"
+        r"explicame\s+(?:la\s+)?|explica(?:me)?\s+(?:la\s+)?)unidad\s+(\d+)",
+        re.IGNORECASE,
+    )
+
+    def _get_resumen(self, unit_num: int) -> dict | None:
+        books = self.load_books_metadata()
+        book = next((b for b in books if str(unit_num) in b.get("label", "")), None)
+        if not book:
+            return {
+                "answer": f"No tengo la Unidad {unit_num} cargada. Pregúntame sobre las unidades disponibles. 📚",
+                "sources": self._SPECIAL_SOURCE,
+            }
+        text = self.load_book_text(book["filename"])
+        sections = self.split_into_sections(text)
+        titles = [
+            s["title"] for s in sections
+            if s.get("heading") and not self.is_noise_section(s)
+        ][:8]
+        label = book["label"]
+        resumen = f"📚 **{label}**\n\n" + (
+            "\n".join(f"- {t}" for t in titles) if titles else "No se encontraron secciones."
+        )
+        return {
+            "answer": resumen,
+            "sources": [{"source": book["filename"], "label": label, "version": book["version"]}],
+        }
+
     def detect_special_question(self, question: str) -> dict | None:
         import random
         normalized = normalize_question(question)
+
+        # Resumen de unidad específica
+        m = self._RESUMEN_RE.search(normalized)
+        if m:
+            return self._get_resumen(int(m.group(1)))
 
         for trigger in self._WHO_AM_I_TRIGGERS:
             if trigger in normalized:
@@ -418,7 +461,7 @@ class RagService:
             if trigger in normalized:
                 return {"answer": self._CREATORS_REPLY, "sources": self._SPECIAL_SOURCE}
         for trigger in self._GREETING_TRIGGERS:
-            if normalized.strip() == trigger or normalized.startswith(trigger + " ") or normalized == trigger:
+            if normalized.strip() == trigger or normalized.startswith(trigger + " "):
                 reply = random.choice(self._GREETING_REPLIES)
                 return {"answer": reply, "sources": self._SPECIAL_SOURCE}
         for trigger in self._THANKS_TRIGGERS:
@@ -431,7 +474,14 @@ class RagService:
 
     # ── Public API ───────────────────────────────────────────────────────── #
 
-    def ask(self, question: str, context: list[str] | None = None, user_id: str | None = None) -> dict:
+    def ask(
+        self,
+        question: str,
+        context: list[str] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        history: list[dict] | None = None,
+    ) -> dict:
         from app.services.cache_service import cache_service
 
         # Injection check
@@ -442,7 +492,7 @@ class RagService:
                 "related_question": None,
             }
 
-        # Hardcoded
+        # Hardcoded / resumen / greetings
         special = self.detect_special_question(question)
         if special:
             return {**special, "related_question": None}
@@ -452,15 +502,20 @@ class RagService:
         if calc:
             return {**calc, "related_question": None}
 
-        # Cache
+        # Exact cache hit
         cached = cache_service.get(question)
         if cached:
             return {**cached, "from_cache": True}
 
-        matches = self.retrieve_context(question)
-        raw_answer = self.generate_answer(question, matches)
+        # Similar question (Jaccard ≥ 80%)
+        similar = cache_service.find_similar(question, threshold=0.8)
+        if similar:
+            return {**similar, "from_cache": True, "from_similar": True}
 
-        # Extract related question if Groq included it
+        matches = self.retrieve_context(question)
+        raw_answer = self.generate_answer(question, matches, history=history)
+
+        # Extract related question
         related_question = None
         answer = raw_answer
         marker = "💡 **También podrías preguntarme:**"
@@ -483,7 +538,6 @@ class RagService:
 
         result = {"answer": answer, "sources": sources, "related_question": related_question}
 
-        # Cache only successful answers
         if matches and "no está disponible" not in answer and "no tengo información" not in answer.lower():
             cache_service.set(question, result)
 

@@ -5,6 +5,8 @@ from typing import Optional
 
 # ── Safe arithmetic (+, -, *, /) ─────────────────────────────────────────────
 
+_MAX_POWER_EXP = 1000  # evita resultados de miles de dígitos
+
 _OPS = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -19,6 +21,12 @@ def _eval_node(node):
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return float(node.value)
     if isinstance(node, ast.BinOp):
+        if isinstance(node.op, ast.Pow):
+            base = _eval_node(node.left)
+            exp = _eval_node(node.right)
+            if exp > _MAX_POWER_EXP:
+                raise ValueError(f"Exponente demasiado grande (máximo {_MAX_POWER_EXP})")
+            return float(base ** exp)
         fn = _OPS.get(type(node.op))
         if not fn:
             raise ValueError("Operador no soportado")
@@ -54,6 +62,10 @@ def _normalize_arith(q: str) -> str:
     q = re.sub(r'\bsumado a\b', '+', q)
     q = re.sub(r'\bdividido entre\b|\bdividido por\b', '/', q)
     q = re.sub(r'\bmultiplicado por\b', '*', q)
+    q = re.sub(r'\bal cuadrado\b', '**2', q)
+    q = re.sub(r'\bal cubo\b', '**3', q)
+    q = re.sub(r'\belevado a\b|\bpotencia\b', '**', q)
+    q = q.replace("^", "**")
     return q
 
 
@@ -158,12 +170,22 @@ def _has(q: str, triggers: set) -> bool:
 
 
 def _extract_expr(q: str) -> Optional[str]:
-    # Match numeric expression with at least one operator
+    q = q.replace(",", ".").replace("^", "**")
     m = re.search(
-        r'((?:[\d.,]+\s*[\+\-\*\/]\s*)+[\d.,]+)',
-        q.replace(",", "."),
+        r'((?:[\d.]+\s*(?:\*\*|[\+\-\*\/])\s*)+[\d.]+)',
+        q,
     )
     return m.group(1).strip() if m else None
+
+
+def _is_bare_expr(q: str) -> bool:
+    """True si la pregunta ES directamente una expresión numérica (sin palabras extra)."""
+    stripped = q.strip()
+    return bool(
+        re.fullmatch(r'[\d\s\+\-\*\/\.\,\^\(\)]+', stripped)
+        and re.search(r'\d', stripped)
+        and re.search(r'[\+\-\*\/\^]', stripped)
+    )
 
 
 # ── Public service ────────────────────────────────────────────────────────────
@@ -197,18 +219,20 @@ class CalculatorService:
             if r:
                 return {"answer": r, "sources": _CALC_SOURCE}
 
-        # 4. Aritmética básica
-        if _has(ql, _ARITH_TRIGGERS) and re.search(r'\d', ql):
-            qn = _normalize_arith(ql)
-            expr = _extract_expr(qn)
-            if expr:
-                try:
-                    result = _safe_eval(expr)
-                    return {"answer": f"{expr.strip()} = {_fmt(result)}", "sources": _CALC_SOURCE}
-                except ZeroDivisionError:
-                    return {"answer": "⚠️ No se puede dividir entre cero.", "sources": _CALC_SOURCE}
-                except Exception:
-                    pass
+        # 4. Aritmética básica (con palabra clave o expresión directa)
+        qn = _normalize_arith(ql)
+        expr = _extract_expr(qn)
+        if expr and (_has(ql, _ARITH_TRIGGERS) or _is_bare_expr(ql)):
+            try:
+                result = _safe_eval(expr)
+                return {"answer": f"{expr.strip()} = {_fmt(result)}", "sources": _CALC_SOURCE}
+            except ZeroDivisionError:
+                return {"answer": "⚠️ No se puede dividir entre cero.", "sources": _CALC_SOURCE}
+            except ValueError as e:
+                if "grande" in str(e):
+                    return {"answer": f"⚠️ Exponente demasiado grande (máximo {_MAX_POWER_EXP}).", "sources": _CALC_SOURCE}
+            except Exception:
+                pass
 
         return None
 

@@ -1,0 +1,18 @@
+{
+  "questions_total": 9,
+  "questions_today": 9,
+  "today_date": "2026-06-20",
+  "questions_by_unit": {
+    "Unidad 1": 5,
+    "Unidad 2": 2,
+    "Unidad 3": 1
+  },
+  "active_user_ids": [
+    "user1",
+    "user2",
+    "u1",
+    "u2",
+    "user_a",
+    "user_b"
+  ]
+}

@@ -26,5 +26,26 @@
     "question": "pregunta B",
     "answer": "",
     "timestamp": "2026-06-19T21:14:39.006990+00:00"
+  },
+  {
+    "request_id": "r1",
+    "useful": true,
+    "question": "buena pregunta",
+    "answer": "buena respuesta",
+    "timestamp": "2026-06-20T12:43:03.806817+00:00"
+  },
+  {
+    "request_id": "r2",
+    "useful": false,
+    "question": "mala pregunta",
+    "answer": "",
+    "timestamp": "2026-06-20T12:43:03.807100+00:00"
+  },
+  {
+    "request_id": "r3",
+    "useful": true,
+    "question": "otra buena",
+    "answer": "resp",
+    "timestamp": "2026-06-20T12:43:03.807284+00:00"
   }
 ]

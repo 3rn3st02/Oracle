@@ -11,5 +11,61 @@
   "abd87adeea1681817dec96e849d4e6af": {
     "answer": "resp",
     "sources": []
+  },
+  "2342e5c264978b2df50c73188d415e2b": {
+    "data": {
+      "answer": "La placa base es...",
+      "sources": [],
+      "related_question": null
+    },
+    "normalized_q": "que es la placa base del ordenador"
+  },
+  "3ba62c6aade53f178f094d2094cb4a44": {
+    "data": {
+      "answer": "Sirve para...",
+      "sources": [],
+      "related_question": null
+    },
+    "normalized_q": "para que sirve la placa base"
+  },
+  "f9140b34d8a7f1e6efec3e0426aefe24": {
+    "data": {
+      "answer": "resp test",
+      "sources": [],
+      "related_question": null
+    },
+    "normalized_q": "test_pregunta_626c58b0"
+  },
+  "82e396724580bc17492c2ef4a217e1e9": {
+    "data": {
+      "answer": "test",
+      "sources": [],
+      "related_question": null
+    },
+    "normalized_q": "que es la placa base"
+  },
+  "49926beeb48a821620f90db21e2cd19c": {
+    "data": {
+      "answer": "RAM sirve para...",
+      "sources": [],
+      "related_question": null
+    },
+    "normalized_q": "para que sirve la memoria ram"
+  },
+  "34d2f4b566380934baf6703d56a3fce7": {
+    "data": {
+      "answer": "La BIOS es firmware",
+      "sources": [],
+      "related_question": null
+    },
+    "normalized_q": "que es la bios exactamente"
+  },
+  "bfcd2c92262f79d90c90361a42594534": {
+    "data": {
+      "answer": "La caché es...",
+      "sources": [],
+      "related_question": null
+    },
+    "normalized_q": "que es la memoria cache del procesador"
   }
 }

@@ -18,15 +18,7 @@ class CacheService:
             except Exception:
                 self._cache = {}
 
-    def _key(self, question: str) -> str:
-        normalized = normalize_question(question)
-        return hashlib.md5(normalized.encode()).hexdigest()
-
-    def get(self, question: str) -> dict | None:
-        return self._cache.get(self._key(question))
-
-    def set(self, question: str, result: dict) -> None:
-        self._cache[self._key(question)] = result
+    def _save(self) -> None:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(
@@ -34,6 +26,43 @@ class CacheService:
             )
         except Exception:
             pass
+
+    def _key(self, question: str) -> str:
+        return hashlib.md5(normalize_question(question).encode()).hexdigest()
+
+    def get(self, question: str) -> dict | None:
+        entry = self._cache.get(self._key(question))
+        if entry is None:
+            return None
+        # Support both old format (flat dict) and new format ({data, normalized_q})
+        if isinstance(entry, dict) and "data" in entry and "normalized_q" in entry:
+            return entry["data"]
+        return entry
+
+    def set(self, question: str, result: dict) -> None:
+        normalized = normalize_question(question)
+        self._cache[self._key(question)] = {"data": result, "normalized_q": normalized}
+        self._save()
+
+    def find_similar(self, question: str, threshold: float = 0.8) -> dict | None:
+        """Return cached result for a question with Jaccard similarity ≥ threshold."""
+        normalized = normalize_question(question)
+        words_a = set(normalized.split())
+        if not words_a:
+            return None
+        for entry in self._cache.values():
+            if not isinstance(entry, dict) or "normalized_q" not in entry:
+                continue
+            words_b = set(entry["normalized_q"].split())
+            if not words_b:
+                continue
+            union = len(words_a | words_b)
+            if union == 0:
+                continue
+            jaccard = len(words_a & words_b) / union
+            if jaccard >= threshold:
+                return entry["data"]
+        return None
 
     def size(self) -> int:
         return len(self._cache)
