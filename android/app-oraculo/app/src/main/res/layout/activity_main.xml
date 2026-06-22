@@ -1,193 +1,422 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+
+<!--
+    Root principal del layout.
+
+    DrawerLayout debe ser el único root del XML.
+    Dentro de DrawerLayout existen dos hijos principales:
+
+    1. Pantalla principal de la app
+       - Es tu ConstraintLayout original
+       - Mantiene el id @+id/main
+       - Mantiene el fondo animado y toda la UI actual
+
+    2. Panel lateral
+       - Es el menú lateral izquierdo
+       - Usa layout_gravity="start"
+-->
+<androidx.drawerlayout.widget.DrawerLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/main"
+    android:id="@+id/drawerLayout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#070B14"
-    android:animateLayoutChanges="true">
+    android:layout_height="match_parent">
 
-    <!-- Fondo animado ya existente -->
-    <com.oraculo.app.ui.views.NightChatBackgroundView
-        android:id="@+id/nightChatBackground"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+    <!-- ========================================================= -->
+    <!-- PANTALLA PRINCIPAL EXISTENTE                              -->
+    <!-- ========================================================= -->
 
-    <!-- Contenedor principal del contenido -->
-    <LinearLayout
-        android:id="@+id/contentContainer"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:orientation="vertical"
-        android:paddingStart="20dp"
-        android:paddingTop="20dp"
-        android:paddingEnd="20dp"
-        android:paddingBottom="12dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/composerContainer"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+    <!--
+        Este ConstraintLayout es tu layout principal actual.
 
-        <!-- Título -->
-        <TextView
-            android:id="@+id/textTitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="ORACLE"
-            android:textColor="#FFFFFF"
-            android:textSize="30sp"
-            android:textStyle="bold"
-            android:gravity="center" />
+        IMPORTANTE:
+        - Se conserva el id @+id/main
+        - MainActivity.kt lo usa en setupInsets()
+        - El fondo animado sigue dentro de este contenedor
+        - No se aplica DrawerLayout directamente a tu lógica principal
+    -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/main"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#070B14"
+        android:animateLayoutChanges="true">
 
-        <!-- Subtítulo -->
-        <TextView
-            android:id="@+id/textSubtitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Cliente Android conectado al backend IA"
-            android:textColor="#9BB0D7"
-            android:textSize="14sp"
-            android:gravity="center"
-            android:layout_marginTop="8dp" />
-
-        <!-- Estado del backend -->
-        <TextView
-            android:id="@+id/textBackendStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Backend: comprobando conexión..."
-            android:textColor="#EAF2FF"
-            android:textSize="15sp"
-            android:layout_marginTop="24dp" />
-
-        <!-- Pregunta mostrada -->
-        <TextView
-            android:id="@+id/textQuestion"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Pregunta: todavía no se ha enviado ninguna consulta."
-            android:textColor="#C9D4F5"
-            android:textSize="15sp"
-            android:layout_marginTop="18dp" />
-
-        <!-- Etiqueta de respuesta -->
-        <TextView
-            android:id="@+id/textAnswerLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Respuesta:"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:layout_marginTop="18dp" />
-
-        <!-- Scroll de respuesta -->
-        <ScrollView
-            android:id="@+id/scrollAnswer"
-            android:layout_width="match_parent"
+        <!-- Fondo animado ya existente -->
+        <com.oraculo.app.ui.views.NightChatBackgroundView
+            android:id="@+id/nightChatBackground"
+            android:layout_width="0dp"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:layout_marginTop="10dp"
-            android:fillViewport="true">
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
 
+
+        <!--
+            Contenedor visual del botón de apertura del drawer.
+
+            Se usa un aura nativa Android debajo del botón 🔮.
+            Motivo:
+            - FondoBoton.json crashea en Android/Lottie por un LinearGradient inválido.
+            - El aura nativa evita cierres de la app.
+            - El botón sigue midiendo 48dp.
+            - El aura mide 72dp y queda justo debajo, sobresaliendo alrededor.
+        -->
+        <FrameLayout
+            android:id="@+id/drawerButtonContainer"
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:layout_marginStart="1dp"
+            android:layout_marginTop="20dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:elevation="16dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <!--
+                Aura decorativa bajo el botón.
+
+                Esta vista NO recibe clicks.
+                Solo sirve como efecto visual para invitar a pulsar.
+            -->
+            <View
+                android:id="@+id/buttonOpenDrawerAura"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_oracle_drawer_button_aura"
+                android:clickable="false"
+                android:focusable="false"
+                android:alpha="0.75" />
+
+            <!--
+                Botón real de apertura del drawer.
+
+                IMPORTANTE:
+                - Se mantiene el id buttonOpenDrawer.
+                - MainActivity.kt no pierde el listener.
+                - El botón real mide 48dp.
+            -->
             <TextView
-                android:id="@+id/textAnswer"
+                android:id="@+id/buttonOpenDrawer"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:background="@android:color/transparent"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="🔮"
+                android:textColor="#FFFFFF"
+                android:textSize="28sp" />
+
+        </FrameLayout>
+
+
+
+        <!-- Contenedor principal del contenido -->
+        <LinearLayout
+            android:id="@+id/contentContainer"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingTop="20dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="12dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/composerContainer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <!-- Título -->
+            <TextView
+                android:id="@+id/textTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="La respuesta aparecerá aquí."
-                android:textColor="#DDE6FF"
-                android:textSize="16sp"
-                android:lineSpacingExtra="5dp" />
-        </ScrollView>
+                android:text="ORACULO"
+                android:textColor="#FFFFFF"
+                android:textSize="30sp"
+                android:textStyle="bold"
+                android:gravity="center" />
 
-        <!-- ProgressBar -->
-        <ProgressBar
-            android:id="@+id/progressBar"
-            style="?android:attr/progressBarStyleSmall"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="10dp"
-            android:layout_marginBottom="10dp"
-            android:indeterminate="true"
-            android:indeterminateDrawable="@drawable/progress_oracle_static"
-            android:visibility="gone" />
+            <!-- Subtítulo -->
+            <TextView
+                android:id="@+id/textSubtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Cliente Android conectado al backend IA"
+                android:textColor="#9BB0D7"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:layout_marginTop="8dp" />
 
-    </LinearLayout>
+            <!-- Estado del backend -->
+            <TextView
+                android:id="@+id/textBackendStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Backend: comprobando conexión..."
+                android:textColor="#EAF2FF"
+                android:textSize="15sp"
+                android:layout_marginTop="24dp" />
 
-    <!-- Barra inferior de mensaje
-    Contenedor fijo inferior que agrupa input + botón.
-     minHeight asegura área táctil cómoda. -->
+            <!-- Pregunta mostrada -->
+            <TextView
+                android:id="@+id/textQuestion"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Pregunta: todavía no se ha enviado ninguna consulta."
+                android:textColor="#C9D4F5"
+                android:textSize="15sp"
+                android:layout_marginTop="18dp" />
 
-    <LinearLayout
-        android:id="@+id/composerContainer"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:minHeight="50dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="16dp"
-        android:background="@drawable/bg_message_composer"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+            <!-- Etiqueta de respuesta -->
+            <TextView
+                android:id="@+id/textAnswerLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Respuesta:"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:layout_marginTop="18dp" />
 
-        <!-- Campo de texto y hacer que el campo crezca al escribir
+            <!-- Scroll de respuesta -->
 
-        Mantiene el mismo id editQuestion para no romper MainActivity.
-        Crece según el texto hasta 10 líneas.
-        minHeight de 48dp para evitar warning de touch target. -->
+            <!-- ProgressBar -->
 
-        <EditText
-            android:id="@+id/editQuestion"
+            <ScrollView
+                android:id="@+id/scrollAnswer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginTop="10dp"
+                android:layout_weight="1"
+                android:fillViewport="true">
+
+                <TextView
+                    android:id="@+id/textAnswer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="5dp"
+                    android:text="La respuesta aparecerá aquí."
+                    android:textColor="#DDE6FF"
+                    android:textSize="16sp" />
+            </ScrollView>
+
+            <ProgressBar
+                android:id="@+id/progressBar"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="10dp"
+                android:indeterminate="true"
+                android:indeterminateDrawable="@drawable/progress_oracle_static"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+        <!--
+            Barra inferior de mensaje.
+
+            Se conserva:
+            - id composerContainer
+            - id editQuestion
+            - id buttonAsk
+
+            Esto evita romper MainActivity.kt.
+        -->
+        <LinearLayout
+            android:id="@+id/composerContainer"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:minHeight="48dp"
-            android:background="@android:color/transparent"
-            android:gravity="top|start"
-            android:hint="El destino tiene un precio por ser visto..."
-            android:imeOptions="actionSend|flagNoExtractUi"
-            android:inputType="textCapSentences|textMultiLine"
-            android:maxLines="10"
-            android:minLines="1"
-            android:overScrollMode="ifContentScrolls"
-            android:paddingStart="10dp"
-            android:paddingTop="10dp"
-            android:paddingEnd="10dp"
-            android:paddingBottom="10dp"
-            android:scrollbars="vertical"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#7F8DAE" />
+            android:minHeight="50dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_message_composer"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
+            <!--
+                Campo de texto.
 
+                Mantiene el mismo id editQuestion.
+                El hint puede seguir siendo reemplazado por OracleHintProvider.
+            -->
+            <EditText
+                android:id="@+id/editQuestion"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:background="@android:color/transparent"
+                android:gravity="top|start"
+                android:hint="El destino tiene un precio por ser visto..."
+                android:imeOptions="actionSend|flagNoExtractUi"
+                android:inputType="textCapSentences|textMultiLine"
+                android:maxLines="10"
+                android:minLines="1"
+                android:overScrollMode="ifContentScrolls"
+                android:paddingStart="10dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="10dp"
+                android:scrollbars="vertical"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#7F8DAE" />
 
-        <!-- Botón enviar
-             Mantiene el mismo id buttonAsk para no romper MainActivity.
-             Se aumenta altura mínima a 48dp para cumplir accesibilidad táctil.
+            <!--
+                Botón enviar.
+
+                Mantiene el mismo id buttonAsk.
+                MainActivity.kt sigue usando este id.
+            -->
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/buttonAsk"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:minWidth="48dp"
+                android:minHeight="48dp"
+                android:background="@drawable/bg_button_glass_rgb"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp"
+                android:text="⪢"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- ========================================================= -->
+    <!-- PANEL LATERAL DEL DRAWER                                  -->
+    <!-- ========================================================= -->
+
+    <!--
+        Panel lateral izquierdo.
+
+        Este panel pertenece al DrawerLayout porque usa:
+        android:layout_gravity="start"
+
+        El objetivo es que el fondo Lottie ocupe todo el panel.
+    -->
+    <FrameLayout
+        android:id="@+id/drawerMenu"
+        android:layout_width="280dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:background="#070B14"
+        android:clipChildren="true"
+        android:clipToPadding="true">
+
+        <!--
+            Fondo animado del drawer usando Lottie.
+
+            Cambios importantes:
+            - match_parent en ancho y alto
+            - scaleType centerCrop para cubrir el panel
+            - alpha suave para integrarlo con la estética oscura
+            - queda como primer hijo del FrameLayout para estar detrás del contenido
+
+            El archivo debe existir en:
+            app/src/maiborn/assets/fondo1.json
         -->
-        <androidx.appcompat.widget.AppCompatButton
-            android:id="@+id/buttonAsk"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp"
-            android:minWidth="48dp"
-            android:minHeight="48dp"
-            android:background="@drawable/bg_button_glass_rgb"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp"
-            android:text="⪢"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textStyle="bold" />
+        <com.airbnb.lottie.LottieAnimationView
+            android:id="@+id/lottieDrawerBackground"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:alpha="0.95"
+            app:lottie_autoPlay="true"
+            app:lottie_loop="true" />
 
+        <!--
+            Capa oscura encima del Lottie.
 
-    </LinearLayout>
+            Sirve para que el texto del menú sea legible
+            y para integrar visualmente la animación con el fondo nocturno.
+        -->
+        <View
+            android:id="@+id/drawerDarkOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#66000000" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+        <!--
+            Contenido encima del fondo animado.
+
+            Aquí después pondremos:
+            - Unidad 1
+            - temas
+            - subtemas
+            - expand/collapse
+        -->
+        <LinearLayout
+            android:id="@+id/drawerContent"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingTop="48dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="20dp">
+
+            <!--
+                Título del drawer.
+            -->
+            <TextView
+                android:id="@+id/drawerTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                android:text="ORACLE"
+                android:textColor="@android:color/white"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <!--
+                Placeholder inicial de Unidad 1.
+
+                En la siguiente fase este TextView será reemplazado
+                o acompañado por una lista expandible.
+            -->
+            <!--
+    Contenedor dinámico del árbol de prompts.
+
+    MainActivity.kt agregará aquí:
+    - Unidad 1
+    - temas
+    - subtemas
+    - nodos expandibles
+
+    El ScrollView permite navegar por listas largas dentro del drawer.
+-->
+            <ScrollView
+                android:id="@+id/drawerScroll"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:fillViewport="true">
+
+                <LinearLayout
+                    android:id="@+id/promptTreeContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+            </ScrollView>
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+</androidx.drawerlayout.widget.DrawerLayout>
