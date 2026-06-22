@@ -1,8 +1,11 @@
 import json
+import logging
 from pathlib import Path
 
 from docx import Document
 from pypdf import PdfReader
+
+logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
@@ -29,6 +32,9 @@ class IngestionService:
 
     def extract_docx_text(self, docx_filename: str) -> str:
         docx_path = self.books_path / docx_filename
+        logger.info("Abriendo DOCX: %s (existe: %s, tamaño: %s bytes)",
+                    docx_path, docx_path.exists(),
+                    docx_path.stat().st_size if docx_path.exists() else "N/A")
         if not docx_path.exists():
             raise FileNotFoundError(f"No se encontró el archivo: {docx_path}")
         doc = Document(str(docx_path))

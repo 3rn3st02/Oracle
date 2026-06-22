@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 import uuid
@@ -8,6 +9,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import get_settings
 from app.models.request_models import (
@@ -190,6 +193,8 @@ async def upload_book(file: UploadFile = File(...)) -> UploadResponse:
     try:
         ingestion_service.ingest_file(file.filename)
     except Exception as e:
+        logger.exception("Error al procesar el archivo '%s' (ruta: %s, existe: %s): %s",
+                         file.filename, dest, dest.exists(), e)
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail=f"Error al procesar el archivo: {e}")

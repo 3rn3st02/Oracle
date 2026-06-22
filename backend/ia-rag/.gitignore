@@ -50,6 +50,12 @@ data/processed/*
 !data/processed/.gitkeep
 !data/books_metadata.json
  
+# -------- RUNTIME DATA (no subir al repo) --------
+data/cache.json
+data/feedback.json
+data/history.json
+data/stats.json
+
 # -------- TEST CACHE --------
 .pytest_cache/
 tests/test_produccion.py
