@@ -220,6 +220,7 @@ class OraculoRepository {
 
                             if (!token.isNullOrEmpty()) {
                                 onToken(token)
+                                kotlinx.coroutines.delay(25) // delay para efecto de escritura
                             }
                         }
                     }

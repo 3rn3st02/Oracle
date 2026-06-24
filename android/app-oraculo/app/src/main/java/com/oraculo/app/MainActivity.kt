@@ -29,6 +29,12 @@ import android.graphics.Typeface
 import android.widget.LinearLayout
 import com.oraculo.app.ui.navigation.PromptNode
 import com.oraculo.app.ui.navigation.UnitOnePromptProvider
+import com.oraculo.app.ui.navigation.UnitTwoPromptProvider
+import com.oraculo.app.ui.navigation.UnitThreePromptProvider
+import com.oraculo.app.ui.navigation.UnitFourPromptProvider
+import com.oraculo.app.ui.navigation.UnitFivePromptProvider
+import com.oraculo.app.ui.navigation.UnitSixPromptProvider
+import com.oraculo.app.ui.navigation.UnitSevenPromptProvider
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -116,6 +122,16 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var lottieDrawerBackground: LottieAnimationView
 
+    /*
+ * Nodo raíz del árbol de unidades.
+ *
+ * Se usa como contenedor general del desplegable.
+ * IMPORTANTE:
+ * - No debe enviarse como prompt.
+ * - Solo debe expandirse/contraerse.
+ */
+    private val rootPromptTitle = "Temarios"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Llama a la implementación de la clase padre para mantener el ciclo de vida correcto
         super.onCreate(savedInstanceState)
@@ -146,6 +162,7 @@ class MainActivity : AppCompatActivity() {
          */
         drawerLayout = findViewById(R.id.drawerLayout)
 
+        expandedPromptNodes.add(rootPromptTitle)
 
         // Agrega un escucha para detectar los eventos y estados del panel lateral (Drawer)
         drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
@@ -189,15 +206,24 @@ class MainActivity : AppCompatActivity() {
         setupListeners()
         // Realiza una verificación del estado de conexión y salud del servidor backend
         checkBackendHealth()
-        /*
-        * Carga Unidad 1 en el panel lateral.
-        */
-        setupPromptDrawer()
+
 
         /*
+         * Renderiza el árbol de temas dentro del panel lateral.
+         *
+         * IMPORTANTE:
+         * Sin esta llamada, el contenedor promptTreeContainer queda vacío
+         * y no aparece ningún desplegable en pantalla.
+         */
+
+
+        setupPromptDrawer()
+               /*
          * Inicia la animación suave del aura del botón 🔮.
          */
         setupDrawerButtonAuraAnimation()
+
+
 
         /*
          * GESTO TEMPORAL PARA PRUEBAS
@@ -577,110 +603,148 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
     /*
- * Configura el menú lateral de prompts.
- *
- * Actualmente carga Unidad 1.
- * En futuras versiones se pueden agregar más unidades:
- * - UnitTwoPromptProvider
- * - UnitThreePromptProvider
- * - etc.
- */
+* Configura el menú lateral de prompts.
+*
+* Ahora todas las unidades quedan encapsuladas
+* dentro de un nodo raíz llamado "Temarios".
+*
+* Árbol esperado:
+* Temarios
+*  ├── Unidad 1
+*  ├── Unidad 2
+*  ├── Unidad 3
+*  ├── Unidad 4
+*  ├── Unidad 5
+*  ├── Unidad 6
+*  └── Unidad 7
+*/
     private fun setupPromptDrawer() {
-        val unitOne = UnitOnePromptProvider.getUnitOne()
 
         /*
-         * Limpiamos el contenedor antes de volver a dibujar.
-         * Esto permite expandir/contraer nodos sin duplicar vistas.
+         * Nodo raíz que encapsula todas las unidades.
+         */
+        val temariosRoot = PromptNode(
+            title = rootPromptTitle,
+            children = listOf(
+                UnitOnePromptProvider.getUnitOne(),
+                UnitTwoPromptProvider.getUnitTwo(),
+                UnitThreePromptProvider.getUnitThree(),
+                UnitFourPromptProvider.getUnitFour(),
+                UnitFivePromptProvider.getUnitFive(),
+                UnitSixPromptProvider.getUnitSix(),
+                UnitSevenPromptProvider.getUnitSeven()
+            )
+        )
+
+        /*
+         * Limpiamos el contenedor para reconstruir el árbol.
          */
         promptTreeContainer.removeAllViews()
 
+        /*
+         * Renderizamos el nodo raíz.
+         */
         renderPromptNode(
-            node = unitOne,
+            node = temariosRoot,
             level = 0
         )
     }
 
     /*
-     * Renderiza visualmente un nodo del árbol.
-     *
-     * level:
-     * - 0 = Unidad
-     * - 1 = tema principal
-     * - 2 o más = subtema
-     */
+  * Renderiza visualmente un nodo del árbol.
+  *
+  * level:
+  * - 0 = raíz ("Temarios")
+  * - 1 = unidad
+  * - 2+ = temas y subtemas
+  */
     private fun renderPromptNode(
         node: PromptNode,
         level: Int
     ) {
         val itemView = TextView(this)
 
+        val isExpanded = expandedPromptNodes.contains(node.title)
+
         /*
          * Prefijo visual:
-         *
-         * ▸ nodo cerrado con hijos
-         * ▾ nodo abierto con hijos
-         * • nodo final sin hijos
-         *
-         * No es numeración.
+         * - raíz -> icono especial
+         * - nodos con hijos -> carpeta
+         * - nodos hoja -> documento
          */
-        val prefix = if (node.hasChildren) {
-            if (expandedPromptNodes.contains(node.title)) {
-                "▾ "
-            } else {
-                "▸ "
+        val prefix = when {
+            node.title == rootPromptTitle && node.hasChildren -> {
+                if (isExpanded) "▾ 📚 " else "▸ 📚 "
             }
-        } else {
-            "• "
+            node.hasChildren -> {
+                if (isExpanded) "▾ 📂 " else "▸ 📂 "
+            }
+            else -> "• 📄 "
         }
 
         itemView.text = prefix + node.title
 
         /*
-         * Color y tamaño según jerarquía.
+         * Color según jerarquía
          */
-        itemView.setTextColor(Color.WHITE)
+        val color = when {
+            node.title == rootPromptTitle -> Color.parseColor("#80D8FF") // azul claro
+            level == 1 -> Color.parseColor("#FFD54F")                    // dorado para unidades
+            node.hasChildren -> Color.parseColor("#FFE082")              // dorado suave
+            else -> Color.WHITE
+        }
 
-        itemView.textSize = when (level) {
-            0 -> 20f
-            1 -> 16f
+        itemView.setTextColor(color)
+
+        /*
+         * Tamaño según nivel
+         */
+        itemView.textSize = when {
+            node.title == rootPromptTitle -> 22f
+            level == 1 -> 19f
+            level == 2 -> 16f
             else -> 14f
         }
 
         /*
-         * La Unidad se marca en negrita.
+         * Tipografía
          */
         itemView.setTypeface(
             null,
-            if (level == 0) Typeface.BOLD else Typeface.NORMAL
+            if (node.title == rootPromptTitle || level == 1) {
+                Typeface.BOLD
+            } else {
+                Typeface.NORMAL
+            }
         )
 
         /*
-         * Indentación visual según profundidad.
+         * Espaciado
          */
         itemView.setPadding(
-            (level * 18).dpToPx(),
-            10.dpToPx(),
-            8.dpToPx(),
-            10.dpToPx()
+            (level * 22).dpToPx(),
+            12.dpToPx(),
+            12.dpToPx(),
+            12.dpToPx()
         )
 
         /*
-         * Click sobre nodo.
+         * Fondo clicable
          */
+        itemView.setBackgroundResource(android.R.drawable.list_selector_background)
+
         itemView.setOnClickListener {
             handlePromptNodeClick(node)
         }
 
-        /*
-         * Añadimos la vista al contenedor.
-         */
         promptTreeContainer.addView(itemView)
 
         /*
-         * Si el nodo está expandido, renderizamos sus hijos.
+         * Render de hijos si está expandido
          */
-        if (node.hasChildren && expandedPromptNodes.contains(node.title)) {
+        if (node.hasChildren && isExpanded) {
             node.children.forEach { child ->
                 renderPromptNode(
                     node = child,
@@ -702,9 +766,43 @@ class MainActivity : AppCompatActivity() {
      * - click expande/contrae.
      * - doble click envía prompt del nodo padre.
      */
+    /*
+ * Gestiona click y doble click en nodos.
+ *
+ * Regla:
+ * - Nodo sin hijos:
+ *   click -> envía prompt directamente.
+ *
+ * - Nodo con hijos:
+ *   click -> expande/contrae.
+ *   doble click -> envía prompt del nodo padre.
+ *
+ * EXCEPCIÓN:
+ * - El nodo raíz "Temarios" nunca debe enviarse como prompt.
+ *   Solo se expande/contrae.
+ */
     private fun handlePromptNodeClick(node: PromptNode) {
+
+        /*
+         * Si no tiene hijos, se envía directamente.
+         */
         if (!node.hasChildren) {
             sendPromptFromDrawer(node.title)
+            return
+        }
+
+        /*
+         * Caso especial:
+         * "Temarios" es solo contenedor, no prompt.
+         */
+        if (node.title == rootPromptTitle) {
+            if (expandedPromptNodes.contains(node.title)) {
+                expandedPromptNodes.remove(node.title)
+            } else {
+                expandedPromptNodes.add(node.title)
+            }
+
+            setupPromptDrawer()
             return
         }
 
