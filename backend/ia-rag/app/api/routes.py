@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -8,15 +9,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
 from app.core.config import get_settings
+from app.admin_panel import get_dashboard_html, get_login_html
 from app.models.request_models import (
     AskRequest,
     ExamCheckRequest,
     ExamGenerateRequest,
+    ExamScoreRequest,
     FeedbackRequest,
     ResumenRequest,
 )
@@ -29,6 +32,8 @@ from app.models.response_models import (
     DeleteResponse,
     ExamCheckResponse,
     ExamGenerateResponse,
+    ExamScoreResponse,
+    ExamScoresResponse,
     FeedbackResponse,
     HealthResponse,
     HistoryResponse,
@@ -235,13 +240,10 @@ def ask(payload: AskRequest) -> AskResponse:
             sources=result.get("sources", []),
         )
 
-    # Determine unit label for stats
-    unit_label = None
     sources = result.get("sources", [])
-    if sources:
-        unit_label = sources[0].get("label")
+    unit_labels = [s["label"] for s in sources if s.get("label")]
     if not is_error:
-        stats_service.record_question(user_id=payload.user_id, unit_label=unit_label)
+        stats_service.record_question(user_id=payload.user_id, unit_labels=unit_labels or None)
 
     return AskResponse(**_ok({
         "answer": answer,
@@ -261,6 +263,15 @@ async def ask_stream(payload: AskRequest):
     async def generate():
         special = rag_service.detect_special_question(payload.question)
         if special:
+            stats_service.record_question(user_id=payload.user_id, unit_label="Oráculo Info")
+            if payload.user_id and payload.session_id:
+                history_service.add_message(
+                    user_id=payload.user_id,
+                    session_id=payload.session_id,
+                    question=payload.question,
+                    answer=special["answer"],
+                    sources=special.get("sources", []),
+                )
             yield f"data: {json.dumps({'token': special['answer'], 'done': False})}\n\n"
             yield f"data: {json.dumps({'token': '', 'done': True, 'request_id': request_id})}\n\n"
             return
@@ -268,6 +279,15 @@ async def ask_stream(payload: AskRequest):
         from app.services.calculator_service import calculator_service
         calc = calculator_service.calculate(payload.question)
         if calc:
+            stats_service.record_question(user_id=payload.user_id, unit_label="Oráculo Info")
+            if payload.user_id and payload.session_id:
+                history_service.add_message(
+                    user_id=payload.user_id,
+                    session_id=payload.session_id,
+                    question=payload.question,
+                    answer=calc["answer"],
+                    sources=[],
+                )
             yield f"data: {json.dumps({'token': calc['answer'], 'done': False})}\n\n"
             yield f"data: {json.dumps({'token': '', 'done': True, 'request_id': request_id})}\n\n"
             return
@@ -276,12 +296,24 @@ async def ask_stream(payload: AskRequest):
         if not cached:
             cached = cache_service.find_similar(payload.question, threshold=0.8)
         if cached:
+            cached_sources = cached.get("sources", [])
+            cached_label = cached_sources[0].get("label") if cached_sources else None
+            stats_service.record_question(user_id=payload.user_id, unit_label=cached_label)
+            if payload.user_id and payload.session_id:
+                history_service.add_message(
+                    user_id=payload.user_id,
+                    session_id=payload.session_id,
+                    question=payload.question,
+                    answer=cached["answer"],
+                    sources=cached_sources,
+                )
             yield f"data: {json.dumps({'token': cached['answer'], 'done': False, 'from_cache': True})}\n\n"
             yield f"data: {json.dumps({'token': '', 'done': True, 'request_id': request_id})}\n\n"
             return
 
         matches = rag_service.retrieve_context(payload.question)
         if not matches:
+            stats_service.record_question(user_id=payload.user_id, unit_label=None)
             yield f"data: {json.dumps({'token': NO_CONTEXT_REPLY, 'done': False})}\n\n"
             yield f"data: {json.dumps({'token': '', 'done': True, 'request_id': request_id})}\n\n"
             return
@@ -294,8 +326,22 @@ async def ask_stream(payload: AskRequest):
                 seen.add(key)
                 sources.append({"source": key, "label": m["book"]["label"], "version": m["book"]["version"]})
 
+        tokens = []
         async for token in rag_service.stream_answer(payload.question, matches):
+            tokens.append(token)
             yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
+
+        full_answer = "".join(tokens)
+        unit_labels = [s["label"] for s in sources if s.get("label")]
+        stats_service.record_question(user_id=payload.user_id, unit_labels=unit_labels or None)
+        if payload.user_id and payload.session_id:
+            history_service.add_message(
+                user_id=payload.user_id,
+                session_id=payload.session_id,
+                question=payload.question,
+                answer=full_answer,
+                sources=sources,
+            )
 
         yield f"data: {json.dumps({'token': '', 'done': True, 'sources': sources, 'request_id': request_id})}\n\n"
 
@@ -322,17 +368,44 @@ def feedback_stats() -> StatsResponse:
 @router.post("/ask/resumen", response_model=ResumenResponse, dependencies=[Depends(_rate_limit)])
 def ask_resumen(payload: ResumenRequest) -> ResumenResponse:
     books = rag_service.load_books_metadata()
-    book = next((b for b in books if str(payload.unidad) in b["label"]), None)
+    _unit_re = re.compile(rf'\bUnidad\s+{payload.unidad}\b', re.IGNORECASE)
+    book = next((b for b in books if _unit_re.search(b.get("label", ""))), None)
     if not book:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No se encontró la Unidad {payload.unidad} en los documentos.",
+        resumen = (
+            f"❌ La Unidad {payload.unidad} aún no la tengo registrada. "
+            f"Actualmente tengo disponibles: "
+            + ", ".join(b["label"] for b in books) + "."
         )
+        return ResumenResponse(**_ok({"unidad": payload.unidad, "resumen": resumen, "label": None}))
+
     text = rag_service.load_book_text(book["filename"])
     sections = rag_service.split_into_sections(text)
-    titles = [s["title"] for s in sections if s.get("heading") and not rag_service.is_noise_section(s)][:8]
-    resumen = f"📚 **Resumen de {book['label']}**\n\n"
-    resumen += "\n".join(f"- {t}" for t in titles) if titles else "No se encontraron secciones."
+    good = [s for s in sections if not rag_service.is_noise_section(s)]
+    excerpt = " ".join(s["text"] for s in good[:10])[:3000]
+
+    if rag_service._groq and excerpt:
+        try:
+            resp = rag_service._groq.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": (
+                        "Eres un asistente educativo. Haz un resumen claro y estructurado "
+                        "del contenido que te proporcionen. Usa viñetas, sé conciso y en español."
+                    )},
+                    {"role": "user", "content": f"Resume este contenido de {book['label']}:\n\n{excerpt}"},
+                ],
+                temperature=0.3,
+                max_tokens=600,
+                timeout=20,
+            )
+            resumen = f"📚 **Resumen de {book['label']}**\n\n" + resp.choices[0].message.content.strip()
+        except Exception:
+            titles = [s["title"] for s in good if s.get("heading")][:10]
+            resumen = f"📚 **Resumen de {book['label']}**\n\n" + "\n".join(f"- {t}" for t in titles)
+    else:
+        titles = [s["title"] for s in good if s.get("heading")][:10]
+        resumen = f"📚 **Resumen de {book['label']}**\n\n" + ("\n".join(f"- {t}" for t in titles) if titles else "No se encontraron secciones.")
+
     return ResumenResponse(**_ok({"unidad": payload.unidad, "resumen": resumen, "label": book["label"]}))
 
 
@@ -370,7 +443,8 @@ def get_session_history(user_id: str, session_id: str) -> HistoryResponse:
 @router.post("/exam/generate", response_model=ExamGenerateResponse, dependencies=[Depends(_rate_limit)])
 def exam_generate(payload: ExamGenerateRequest) -> ExamGenerateResponse:
     books = rag_service.load_books_metadata()
-    book = next((b for b in books if str(payload.unidad) in b["label"]), None)
+    _unit_re = re.compile(rf'\bUnidad\s+{payload.unidad}\b', re.IGNORECASE)
+    book = next((b for b in books if _unit_re.search(b.get("label", ""))), None)
     if not book:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -407,7 +481,7 @@ def admin_stats() -> AdminStatsResponse:
 @router.get("/admin/conversations", response_model=AdminConversationsResponse,
             dependencies=[Depends(_require_api_key)])
 def admin_conversations() -> AdminConversationsResponse:
-    all_history = history_service.get_all()
+    all_history = {k: v for k, v in history_service.get_all().items() if not k.startswith("_")}
     total_users = len(all_history)
     total_sessions = sum(len(sessions) for sessions in all_history.values())
     total_messages = sum(
@@ -442,3 +516,106 @@ def admin_feedback() -> AdminFeedbackResponse:
         "top_questions": st.get("top_questions", []),
         "entries": entries,
     }))
+
+
+# ── Panel web admin ───────────────────────────────────────────────────────────
+
+@router.get("/admin", include_in_schema=False)
+def admin_panel(request: Request, key: str = "") -> HTMLResponse:
+    if not settings.upload_api_key:
+        return HTMLResponse(get_dashboard_html(key))
+    if key != settings.upload_api_key:
+        # Si venía una key incorrecta, pasa ?error=1 para que el JS muestre el mensaje
+        error_param = "?error=1" if key else ""
+        from fastapi.responses import RedirectResponse
+        if key:
+            return RedirectResponse(url=f"/admin{error_param}", status_code=302)
+        return HTMLResponse(get_login_html())
+    return HTMLResponse(get_dashboard_html(key))
+
+
+# ── Exam score tracking ───────────────────────────────────────────────────────
+
+@router.post("/exam/score", response_model=ExamScoreResponse)
+def exam_save_score(payload: ExamScoreRequest) -> ExamScoreResponse:
+    books = rag_service.load_books_metadata()
+    _unit_re = re.compile(rf'\bUnidad\s+{payload.unidad}\b', re.IGNORECASE)
+    book = next((b for b in books if _unit_re.search(b.get("label", ""))), None)
+    unit_label = book["label"] if book else f"Unidad {payload.unidad}"
+    stats_service.add_exam_score(
+        user_id=payload.user_id,
+        unit_label=unit_label,
+        correct=payload.correct,
+        total=payload.total,
+    )
+    pct = round(payload.correct / payload.total * 100)
+    return ExamScoreResponse(**_ok({
+        "user_id": payload.user_id,
+        "unit": unit_label,
+        "correct": payload.correct,
+        "total": payload.total,
+        "percentage": pct,
+    }))
+
+
+@router.get("/exam/scores/{user_id}", response_model=ExamScoresResponse)
+def exam_get_scores(user_id: str) -> ExamScoresResponse:
+    scores = stats_service.get_exam_scores(user_id)
+    return ExamScoresResponse(**_ok({"user_id": user_id, "scores": scores}))
+
+
+# ── /ask/pro — endpoint secreto sin restricción de temario ───────────────────
+
+@router.post("/ask/pro", include_in_schema=False)
+def ask_pro(payload: AskRequest, request: Request) -> dict:
+    _require_api_key(request)
+    if not rag_service._groq:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Servicio de IA no configurado.",
+        )
+    history: list[dict] = []
+    if payload.user_id and payload.session_id:
+        history = history_service.get_last_n(payload.user_id, payload.session_id, n=10)
+
+    messages: list[dict] = [{
+        "role": "system",
+        "content": (
+            "Eres un asistente experto en informática, electrónica y en el módulo "
+            "'Montaje y Mantenimiento de Sistemas Microinformáticos'. "
+            "Responde cualquier pregunta de forma precisa, clara y detallada. "
+            "Puedes responder fuera del temario del módulo si la pregunta lo requiere. "
+            "Usa listas cuando sea útil. Añade ejemplos prácticos. Responde en español."
+        ),
+    }]
+    for h in history:
+        messages.append({"role": "user", "content": h["question"]})
+        messages.append({"role": "assistant", "content": h["answer"]})
+    messages.append({"role": "user", "content": payload.question})
+
+    try:
+        resp = rag_service._groq.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages,
+            temperature=0.5,
+            max_tokens=800,
+            timeout=25,
+        )
+        answer = resp.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error("ask/pro Groq error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servicio de IA no está disponible en este momento.",
+        )
+
+    request_id = str(uuid.uuid4())
+    if payload.user_id and payload.session_id:
+        history_service.add_message(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            question=payload.question,
+            answer=answer,
+            sources=[],
+        )
+    return _ok({"answer": answer, "request_id": request_id})

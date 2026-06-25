@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -36,23 +36,29 @@ class StatsService:
         today = date.today().isoformat()
         if self._data.get("today_date") != today:
             self._data["questions_today"] = 0
+            self._data["active_user_ids_today"] = []
             self._data["today_date"] = today
 
     def record_question(
         self,
         user_id: Optional[str] = None,
         unit_label: Optional[str] = None,
+        unit_labels: Optional[list] = None,
     ) -> None:
         self._reset_today_if_needed()
         self._data["questions_total"] = self._data.get("questions_total", 0) + 1
         self._data["questions_today"] = self._data.get("questions_today", 0) + 1
-        if unit_label:
-            by_unit = self._data.setdefault("questions_by_unit", {})
-            by_unit[unit_label] = by_unit.get(unit_label, 0) + 1
+        by_unit = self._data.setdefault("questions_by_unit", {})
+        labels = unit_labels if unit_labels else ([unit_label] if unit_label else [])
+        for label in labels:
+            by_unit[label] = by_unit.get(label, 0) + 1
         if user_id:
             users = self._data.setdefault("active_user_ids", [])
             if user_id not in users:
                 users.append(user_id)
+            users_today = self._data.setdefault("active_user_ids_today", [])
+            if user_id not in users_today:
+                users_today.append(user_id)
         self._save()
 
     def get_stats(self) -> dict:
@@ -64,9 +70,26 @@ class StatsService:
             "questions_total": total,
             "questions_today": self._data.get("questions_today", 0),
             "active_users": len(self._data.get("active_user_ids", [])),
+            "active_users_today": len(self._data.get("active_user_ids_today", [])),
             "usage_by_unit": by_unit,
             "usage_pct_by_unit": usage_pct,
         }
+
+    def add_exam_score(self, user_id: str, unit_label: str, correct: int, total: int) -> None:
+        scores = self._data.setdefault("exam_scores", [])
+        scores.append({
+            "user_id": user_id,
+            "unit": unit_label,
+            "correct": correct,
+            "total": total,
+            "percentage": round(correct / total * 100) if total > 0 else 0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        self._save()
+
+    def get_exam_scores(self, user_id: str) -> list:
+        scores = self._data.get("exam_scores", [])
+        return [s for s in scores if s.get("user_id") == user_id]
 
     @property
     def questions_total(self) -> int:

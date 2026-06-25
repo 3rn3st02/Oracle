@@ -1,6 +1,8 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+HISTORY_RETENTION_DAYS = 90
 
 
 class HistoryService:
@@ -8,6 +10,7 @@ class HistoryService:
         self._path = Path(__file__).resolve().parents[2] / "data" / "history.json"
         self._data: dict = {}
         self._load()
+        self._auto_cleanup()
 
     def _load(self) -> None:
         if self._path.exists():
@@ -24,6 +27,37 @@ class HistoryService:
             )
         except Exception:
             pass
+
+    def _auto_cleanup(self) -> None:
+        last = self._data.get("_last_cleanup")
+        now = datetime.now(timezone.utc)
+        if last:
+            try:
+                if (now - datetime.fromisoformat(last)).days < HISTORY_RETENTION_DAYS:
+                    return
+            except Exception:
+                pass
+        self.cleanup_old_messages(HISTORY_RETENTION_DAYS)
+
+    def cleanup_old_messages(self, days: int = HISTORY_RETENTION_DAYS) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        removed = 0
+        for user_id in list(self._data.keys()):
+            if user_id.startswith("_"):
+                continue
+            for session_id in list(self._data[user_id].keys()):
+                msgs = self._data[user_id][session_id]
+                kept = [m for m in msgs if datetime.fromisoformat(m["timestamp"]) >= cutoff]
+                removed += len(msgs) - len(kept)
+                if kept:
+                    self._data[user_id][session_id] = kept
+                else:
+                    del self._data[user_id][session_id]
+            if not self._data[user_id]:
+                del self._data[user_id]
+        self._data["_last_cleanup"] = datetime.now(timezone.utc).isoformat()
+        self._save()
+        return removed
 
     def add_message(
         self,

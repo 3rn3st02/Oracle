@@ -74,6 +74,15 @@ SYNONYMS: dict[str, list[str]] = {
     "alu":          ["alu", "unidad aritmetico logica"],
     "io":           ["io", "entrada salida", "input output"],
     "atx":          ["atx", "advanced technology", "factor forma"],
+    # Conexiones / periféricos
+    "puerto":       ["puerto", "conector", "conexion", "interfaz", "slot"],
+    "conector":     ["conector", "conexion", "puerto", "interfaz"],
+    "conexion":     ["conexion", "conector", "puerto", "enlace"],
+    "periferico":   ["periferico", "dispositivo externo", "dispositivo entrada", "dispositivo salida"],
+    "entrada":      ["entrada", "input", "teclado", "raton", "periferico entrada"],
+    "salida":       ["salida", "output", "monitor", "impresora", "periferico salida"],
+    "video":        ["video", "monitor", "pantalla", "hdmi", "vga", "displayport"],
+    "pantalla":     ["pantalla", "monitor", "display", "video"],
     # Montaje y mantenimiento
     "montar":       ["montar", "ensamblar", "armar", "construir", "instalar componentes"],
     "ensamblar":    ["ensamblar", "montar", "armar", "construir"],

@@ -63,3 +63,11 @@ class AdminConversationsResponse(BaseResponse):
 
 class AdminFeedbackResponse(BaseResponse):
     """data: {total, positive, negative, entries}"""
+
+
+class ExamScoreResponse(BaseResponse):
+    """data: {user_id, unit, correct, total, percentage, timestamp}"""
+
+
+class ExamScoresResponse(BaseResponse):
+    """data: {user_id, scores: [...]}"""

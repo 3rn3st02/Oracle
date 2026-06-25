@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "Oráculo"
-    app_version: str = "0.7"
+    app_version: str = "0.8"
     debug: bool = False
 
     api_prefix: str = ""

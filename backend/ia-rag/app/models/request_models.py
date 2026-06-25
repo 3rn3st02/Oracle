@@ -18,11 +18,11 @@ class FeedbackRequest(BaseModel):
 
 
 class ResumenRequest(BaseModel):
-    unidad: int = Field(..., ge=1, le=10, description="Número de unidad a resumir")
+    unidad: int = Field(..., ge=0, le=20, description="Número de unidad a resumir")
 
 
 class ExamGenerateRequest(BaseModel):
-    unidad: int = Field(..., ge=1, le=10, description="Número de unidad")
+    unidad: int = Field(..., ge=0, le=20, description="Número de unidad")
 
 
 class ExamCheckRequest(BaseModel):
@@ -30,3 +30,10 @@ class ExamCheckRequest(BaseModel):
     user_answer: str = Field(..., description="Letra de la respuesta del alumno (A/B/C/D)")
     correct_answer: str = Field(..., description="Letra de la respuesta correcta")
     explanation: Optional[str] = Field(default=None, description="Explicación de la respuesta correcta")
+
+
+class ExamScoreRequest(BaseModel):
+    user_id: str = Field(..., description="ID del alumno")
+    unidad: int = Field(..., ge=0, le=20, description="Número de unidad examinada")
+    correct: int = Field(..., ge=0, description="Respuestas correctas")
+    total: int = Field(..., ge=1, description="Total de preguntas")

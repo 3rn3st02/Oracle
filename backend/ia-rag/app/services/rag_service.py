@@ -177,19 +177,35 @@ class RagService:
         if not keywords:
             return []
 
-        book_data: dict[str, tuple[list[dict], dict]] = {}
-        scored: list[dict] = []
+        book_data: dict[str, tuple[list[dict], dict, list[dict]]] = {}
+        all_valid: list[dict] = []
 
         for book in books:
             text = self.load_book_text(book["filename"])
             if not text:
                 continue
             sections = self.split_into_sections(text)
-            book_data[book["filename"]] = (sections, book)
             valid = [s for s in sections if not self.is_noise_section(s)]
-            idf = self._compute_idf(keywords, valid)
+            book_data[book["filename"]] = (sections, book, valid)
+            all_valid.extend(valid)
+
+        if not all_valid:
+            return []
+
+        # IDF global sobre todas las secciones de todos los libros
+        global_idf = self._compute_idf(keywords, all_valid)
+
+        scored: list[dict] = []
+        for fname, (sections, book, valid) in book_data.items():
+            label_ascii = to_ascii(book["label"].lower())
+            label_bonus = sum(
+                2.5 * global_idf.get(kw, 1.0)
+                for kw in keywords
+                if any(v in label_ascii for v in get_search_variants(kw))
+            )
             for section in valid:
-                score = self.score_section(keywords, question, section, is_list_q, idf)
+                score = self.score_section(keywords, question, section, is_list_q, global_idf)
+                score += label_bonus
                 if score >= 5:
                     scored.append({"section": section, "book": book, "score": score})
 
@@ -210,7 +226,7 @@ class RagService:
                 break
 
         children_of: dict[str, dict[str, list[dict]]] = {}
-        for fname, (sections, _) in book_data.items():
+        for fname, (sections, _, _valid) in book_data.items():
             index: dict[str, list[dict]] = {}
             for s in sections:
                 if s["parent"]:
@@ -282,6 +298,8 @@ class RagService:
             "Reglas:\n"
             "- Empieza con 'Basándome en lo que he aprendido, puedo decirte que...'\n"
             "- Si la pregunta es sobre tipos, partes o pasos, usa listas o numeración.\n"
+            "- Cuando expliques un concepto técnico, añade un ejemplo práctico real si es posible "
+            "(por ejemplo: 'Por ejemplo, en un PC de sobremesa típico...').\n"
             "- Respuestas cortas para preguntas simples, detalladas para conceptos complejos.\n"
             "- Usa algún emoji ocasionalmente (📌 🔧 ⚡ 💡) para amenizar, pero sin abusar.\n"
             "- Si la pregunta está en inglés, responde en español.\n"
@@ -376,9 +394,9 @@ class RagService:
     _CREATORS_TRIGGERS = [
         "quienes son los creadores", "quien te hizo", "quien os hizo",
         "quien te creo", "quien os creo", "quienes te crearon",
-        "quienes son tus creadores", "quien hizo oraculo",
-        "quien te programo", "quien te diseno", "quien esta detras",
-        "los creadores", "tus creadores", "quien te desarrollo",
+        "quienes son tus creadores", "quien hizo oraculo", "quien creo oraculo",
+        "quienes os crearon", "quien te programo", "quien te diseno",
+        "quien esta detras", "los creadores", "tus creadores", "quien te desarrollo",
     ]
     _CREATORS_REPLY = (
         "Archvaro — Guatemalteco de nacimiento, informático por elección. "
@@ -416,15 +434,50 @@ class RagService:
         "- ¿Sobre mantenimiento y limpieza del equipo?"
     )
 
+    _ENTERTAINMENT_TRIGGERS = [
+        # Películas (sin ambigüedad técnica)
+        "pelicula", "peliculas", "temporada", "episodio",
+        "netflix", "hbo", "disney plus", "amazon prime",
+        # Series de TV (frases para evitar falso positivo con "número de serie")
+        "que serie", "una serie", "ver serie", "ver una",
+        "mejores series", "series de",
+        # Videojuegos (términos específicos del ocio)
+        "videojuego", "videojuegos", "jugar al", "jugar a ",
+        "clash of", "fortnite", "minecraft", "league of legends",
+        "playstation", "xbox", "nintendo switch", "steam juego",
+        "kingdom hearts",
+        # Música (sin ambigüedad técnica)
+        "cancion", "canciones", "cantante", "concierto", "spotify",
+        "letra de la", "letra del", "artista musical",
+        # Recomendaciones de ocio
+        "recomienda una pelicula", "recomienda una serie", "recomienda un juego",
+        "recomiendame una pelicula", "recomiendame una serie",
+        "recomiendame un juego", "mejor pelicula", "mejores peliculas",
+    ]
+    _ENTERTAINMENT_REPLY = (
+        "Soy un asistente de Montaje y Mantenimiento de Sistemas Microinformáticos, "
+        "no puedo ayudarte con eso 😊 Pero si tienes dudas sobre hardware, electricidad, "
+        "sistemas operativos o mantenimiento de equipos, ¡aquí estoy!"
+    )
+
     _RESUMEN_RE = re.compile(
-        r"(?:resume(?:me)?\s+(?:la\s+)?|hazme\s+(?:un\s+)?(?:el\s+)?resumen\s+(?:de\s+)?(?:la\s+)?|"
-        r"explicame\s+(?:la\s+)?|explica(?:me)?\s+(?:la\s+)?)unidad\s+(\d+)",
+        r"(?:"
+        r"resume(?:me)?\s+(?:la\s+)?"
+        r"|resumeme\s+(?:la\s+)?"
+        r"|hazme\s+(?:un\s+)?(?:el\s+)?resumen\s+(?:de\s+)?(?:la\s+)?"
+        r"|explicame\s+(?:la\s+)?"
+        r"|explica(?:me)?\s+(?:la\s+)?"
+        r"|que\s+(?:hay|contiene|tiene)\s+(?:en\s+)?(?:la\s+)?"
+        r"|dime\s+(?:lo\s+de\s+)?(?:la\s+)?"
+        r"|informacion\s+(?:de\s+|sobre\s+)?(?:la\s+)?"
+        r")unidad\s+(\d+)",
         re.IGNORECASE,
     )
 
     def _get_resumen(self, unit_num: int) -> dict | None:
         books = self.load_books_metadata()
-        book = next((b for b in books if str(unit_num) in b.get("label", "")), None)
+        _unit_re = re.compile(rf'\bUnidad\s+{unit_num}\b', re.IGNORECASE)
+        book = next((b for b in books if _unit_re.search(b.get("label", ""))), None)
         if not book:
             return {
                 "answer": f"No tengo la Unidad {unit_num} cargada. Pregúntame sobre las unidades disponibles. 📚",
@@ -470,6 +523,9 @@ class RagService:
         for trigger in self._VAGUE_TRIGGERS:
             if trigger in normalized:
                 return {"answer": self._VAGUE_REPLY, "sources": self._SPECIAL_SOURCE}
+        for trigger in self._ENTERTAINMENT_TRIGGERS:
+            if trigger in normalized:
+                return {"answer": self._ENTERTAINMENT_REPLY, "sources": self._SPECIAL_SOURCE}
         return None
 
     # ── Public API ───────────────────────────────────────────────────────── #
