@@ -108,7 +108,7 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
-                android:text="🔮"
+                android:text="🧿"
                 android:textColor="#FFFFFF"
                 android:textSize="28sp" />
 
@@ -295,6 +295,28 @@
 
         </LinearLayout>
 
+
+        <!-- ONBOARDING OVERLAY
+       Se coloca dentro del layout principal, NO como hijo directo del DrawerLayout.
+
+       IMPORTANTE:
+       - elevation alta para quedar por encima del botón del drawer.
+       - clickable/focusable true para bloquear clicks hacia la UI inferior.
+  -->
+        <include
+            android:id="@+id/onboardingView"
+            layout="@layout/view_onboarding_oracle"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            android:elevation="64dp"
+            android:clickable="true"
+            android:focusable="true"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- ========================================================= -->
@@ -349,6 +371,8 @@
             android:id="@+id/drawerDarkOverlay"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:clickable="false"
+            android:focusable="false"
             android:background="#66000000" />
 
         <!--
@@ -418,5 +442,8 @@
         </LinearLayout>
 
     </FrameLayout>
+
+
+
 
 </androidx.drawerlayout.widget.DrawerLayout>

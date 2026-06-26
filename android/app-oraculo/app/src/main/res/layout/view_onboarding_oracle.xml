@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/onboardingContainer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0D0D0D">
+
+
+    <!-- FONDO ANIMADO DEL ONBOARDING -->
+    <com.airbnb.lottie.LottieAnimationView
+        android:id="@+id/lottieOnboardingBackground"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        app:lottie_autoPlay="false"
+        app:lottie_loop="true"
+        app:lottie_fileName="background_onboarding.json" />
+
+
+    <!-- VELO PARA MEJORAR CONTRASTE DEL TEXTO -->
+    <View
+        android:id="@+id/onboardingDimOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#66000000" />
+
+
+    <!-- CONTENIDO CENTRAL -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="24dp">
+
+        <!-- OJO ANIMADO LOTTIE -->
+        <com.airbnb.lottie.LottieAnimationView
+            android:id="@+id/lottieOnboardingEye"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
+            android:layout_marginBottom="24dp"
+            app:lottie_autoPlay="false"
+            app:lottie_loop="true"
+            app:lottie_fileName="eye_of_providence.json" />
+
+
+        <!-- MENSAJE -->
+        <TextView
+            android:id="@+id/textOnboardingMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="¡Saludos, estimado aprendiz! Soy tu Oráculo.\n\n¿Con qué nombre debo dirigirme a ti para comenzar tu guía?"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:gravity="center"
+            android:layout_marginBottom="24dp" />
+
+        <!-- INPUT NOMBRE -->
+        <EditText
+            android:id="@+id/editUserName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Introduce tu nombre"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#AAAAAA"
+            android:background="@android:drawable/edit_text"
+            android:padding="12dp"
+            android:layout_marginBottom="20dp" />
+
+        <!-- BOTÓN -->
+        <Button
+            android:id="@+id/buttonAcceptUserName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Aceptar" />
+
+    </LinearLayout>
+
+</FrameLayout>

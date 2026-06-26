@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.kapt")
+    id("kotlin-kapt")
 }
 
 android {
@@ -15,10 +15,24 @@ android {
         minSdk = 30
         targetSdk = 35
 
-        versionCode = 15
-        versionName = "1.5.1"
+        versionCode = 16
+        versionName = "1.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        /*
+         * Room schema export.
+         *
+         * Permite guardar el esquema de la base local para control de versiones.
+         */
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments += mapOf(
+                    "room.schemaLocation" to "$projectDir/schemas",
+                    "room.incremental" to "true"
+                )
+            }
+        }
     }
 
     buildTypes {
@@ -90,4 +104,18 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 
     implementation("com.airbnb.android:lottie:6.4.0")
+
+    /*
+ * Room - persistencia local para conversaciones y mensajes.
+ *
+ * Se usará para:
+ * - guardar conversaciones locales
+ * - guardar mensajes del usuario y del Oráculo
+ * - guardar request_id de respuestas streaming
+ * - guardar feedback local
+ * - preparar sincronización futura con /feedback
+ */
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")
 }

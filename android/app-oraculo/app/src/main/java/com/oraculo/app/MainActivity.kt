@@ -39,10 +39,27 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 import com.airbnb.lottie.LottieAnimationView
+import com.oraculo.app.data.local.preferences.UserIdentityStore
+import androidx.appcompat.app.AlertDialog
+import com.oraculo.app.data.local.chat.db.OracleChatDatabase
+import com.oraculo.app.data.local.chat.repository.ChatLocalRepository
+
 
 
 
 class MainActivity : AppCompatActivity() {
+    /*
+ * Nombre que ya fue advertido durante el onboarding.
+ *
+ * Flujo:
+ * - Primer click válido: muestra advertencia y guarda aquí el nombre advertido.
+ * - Segundo click con el mismo nombre: guarda definitivamente.
+ *
+ * Si el usuario cambia el nombre después de la advertencia,
+ * la advertencia vuelve a mostrarse.
+ */
+    private var warnedUserName: String? = null
+
 
     private val repository = OraculoRepository()
 
@@ -83,6 +100,31 @@ class MainActivity : AppCompatActivity() {
      */
     private var lastPromptClickTitle: String? = null
     private var lastPromptClickTime: Long = 0L
+
+    private lateinit var userIdentityStore: UserIdentityStore
+
+
+    private lateinit var onboardingView: View
+    private lateinit var editUserName: EditText
+    private lateinit var buttonAcceptUserName: Button
+
+
+
+    /*
+     * Animación Lottie del ojo de bienvenida.
+     */
+    private lateinit var lottieOnboardingEye: LottieAnimationView
+
+    /*
+     * Fondo animado del onboarding.
+     */
+    private lateinit var lottieOnboardingBackground: LottieAnimationView
+
+
+    private lateinit var textOnboardingMessage: TextView
+
+
+
     /*
      * Lista de fondos animados del drawer.
      *
@@ -132,6 +174,58 @@ class MainActivity : AppCompatActivity() {
  */
     private val rootPromptTitle = "Temarios"
 
+    /*
+ * Base de datos local del modo conversación.
+ *
+ * Guarda:
+ * - conversaciones
+ * - mensajes
+ * - fuentes
+ * - request_id
+ * - feedback local
+ */
+    private lateinit var chatDatabase: OracleChatDatabase
+
+    /*
+     * Repositorio local para trabajar con conversaciones
+     * sin usar directamente los DAO desde la Activity.
+     */
+    private lateinit var chatLocalRepository: ChatLocalRepository
+
+
+    /*
+     * ID de la conversación activa.
+     *
+     * Se genera nuevo al iniciar la app desde cero.
+     * Equivale al session_id que se enviará al backend
+     * en cada petición a /ask/stream.
+     *
+     * No se guarda en SharedPreferences porque queremos
+     * que cada arranque completo de la app empiece un chat nuevo.
+     */
+    private var currentSessionId: String? = null
+
+    /*
+     * Clave usada para conservar session_id solo durante recreaciones
+     * temporales de la Activity, por ejemplo rotación de pantalla.
+     *
+     * No es persistencia real entre cierres completos de app.
+     */
+    private val savedSessionIdStateKey = "saved_session_id_state_key"
+
+    /*
+     * Claves para conservar estado visual durante recreaciones temporales
+     * de la Activity, por ejemplo rotación de pantalla.
+     *
+     * Esto NO persiste entre cierres completos de app.
+     */
+    private val savedQuestionTextStateKey = "saved_question_text_state_key"
+    private val savedAnswerTextStateKey = "saved_answer_text_state_key"
+    private val savedInputTextStateKey = "saved_input_text_state_key"
+    private val savedLoadingStateKey = "saved_loading_state_key"
+
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Llama a la implementación de la clase padre para mantener el ciclo de vida correcto
         super.onCreate(savedInstanceState)
@@ -177,6 +271,75 @@ class MainActivity : AppCompatActivity() {
          * Inicialización normal de vistas
          */
         bindViews()
+
+        /*
+ * Restaura textos visibles si Android recreó la Activity,
+ * por ejemplo al rotar el móvil.
+ */
+        restoreVisibleConversationState(savedInstanceState)
+
+
+        userIdentityStore = UserIdentityStore(this)
+
+        /*
+         * Inicializa el user_id de forma segura
+         */
+        val userId = userIdentityStore.getOrCreateUserId()
+
+        Log.d("ORACLE_SESSION", "user_id generado: $userId")
+
+        /*
+         * Inicializamos la base de datos local del modo conversación.
+         *
+         * Esta base guardará:
+         * - conversaciones
+         * - mensajes
+         * - request_id de respuestas streaming
+         * - feedback local
+         */
+        chatDatabase = OracleChatDatabase.getInstance(this)
+
+        /*
+         * Inicializamos el repositorio local de chat.
+         *
+         * MainActivity usará este repositorio para crear conversaciones,
+         * guardar mensajes y preparar feedback.
+         */
+        chatLocalRepository = ChatLocalRepository(
+            conversationDao = chatDatabase.conversationDao(),
+            messageDao = chatDatabase.messageDao(),
+            sourceDao = chatDatabase.sourceDao()
+        )
+
+        Log.d("ORACLE_CHAT_DB", "Base local de chat inicializada correctamente")
+
+        /*
+         * Inicializa la conversación activa.
+         *
+         * Si Android está recreando la Activity, reutilizamos el session_id temporal.
+         * Si la app arranca desde cero, creamos un nuevo chat.
+         */
+        val restoredSessionId = savedInstanceState?.getString(savedSessionIdStateKey)
+
+        if (!restoredSessionId.isNullOrBlank()) {
+            currentSessionId = restoredSessionId
+            Log.d("ORACLE_SESSION", "session_id restaurado temporalmente: $restoredSessionId")
+        } else {
+            startNewConversationForAppLaunch()
+        }
+        /*
+        * Decide si mostrar onboarding
+        */
+        val isOnboardingDone = userIdentityStore.isOnboardingCompleted()
+
+        if (!isOnboardingDone) {
+            showOnboarding()
+        } else {
+            hideOnboarding()
+        }
+
+
+
 
         /* =================================================================
          * PRECARGA INICIAL DE LOTTIE (Soluciona el Lag de primera apertura)
@@ -253,6 +416,56 @@ class MainActivity : AppCompatActivity() {
     }
 
     /*
+    * Guarda temporalmente el estado actual si Android recrea la Activity.
+    *
+    * Esto ocurre, por ejemplo, al rotar el móvil.
+    *
+    * IMPORTANTE:
+    * - No persiste entre cierres completos de app.
+    * - Solo evita perder la respuesta visible por recreación temporal.
+    */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+
+        /*
+         * Conservamos el session_id actual durante rotación.
+         */
+        currentSessionId?.let { sessionId ->
+            outState.putString(savedSessionIdStateKey, sessionId)
+        }
+
+        /*
+         * Conservamos el contenido visual actual.
+         */
+        outState.putString(
+            savedQuestionTextStateKey,
+            textQuestion.text?.toString().orEmpty()
+        )
+
+        outState.putString(
+            savedAnswerTextStateKey,
+            textAnswer.text?.toString().orEmpty()
+        )
+
+        outState.putString(
+            savedInputTextStateKey,
+            editQuestion.text?.toString().orEmpty()
+        )
+
+        /*
+         * Guardamos si estaba cargando.
+         *
+         * Nota:
+         * Por ahora no reanudamos streaming tras rotación.
+         * Solo evitamos perder el texto ya visible.
+         */
+        outState.putBoolean(
+            savedLoadingStateKey,
+            progressBar.visibility == View.VISIBLE
+        )
+    }
+
+    /*
      * Abre el menú lateral desde la izquierda
      */
     private fun openDrawer() {
@@ -273,11 +486,326 @@ class MainActivity : AppCompatActivity() {
         buttonOpenDrawer = findViewById(R.id.buttonOpenDrawer)
         buttonOpenDrawerAura = findViewById(R.id.buttonOpenDrawerAura)
         lottieDrawerBackground = findViewById(R.id.lottieDrawerBackground)
+        /*
+        * Vistas del onboarding inicial.
+        */
+        onboardingView = findViewById(R.id.onboardingView)
+        lottieOnboardingEye = findViewById(R.id.lottieOnboardingEye)
+        lottieOnboardingBackground = findViewById(R.id.lottieOnboardingBackground)
+        textOnboardingMessage = findViewById(R.id.textOnboardingMessage)
+        editUserName = findViewById(R.id.editUserName)
+        buttonAcceptUserName = findViewById(R.id.buttonAcceptUserName)
+        editUserName.filters = arrayOf(android.text.InputFilter.LengthFilter(10))
+
+
     }
 
     private fun setupDynamicInputHint() {
         editQuestion.hint = OracleHintProvider.getRandomHint()
     }
+
+    /*
+    * Muestra el onboarding inicial.
+    *
+    * Además de hacerlo visible, prepara los elementos
+    * y lanza una animación introductoria:
+    *
+    * - aparece el ojo
+    * - el ojo pulsa suavemente
+    * - el ojo se desplaza hacia arriba
+    * - aparece el texto
+    * - aparece el campo de nombre
+    * - aparece el botón
+ */
+    private fun showOnboarding() {
+        onboardingView.visibility = View.VISIBLE
+
+        /*
+        * Mientras el onboarding está visible, ocultamos el botón del drawer
+        * para evitar que se vea o reciba interacción.
+        */
+        buttonOpenDrawer.visibility = View.GONE
+        buttonOpenDrawerAura.visibility = View.GONE
+
+        warnedUserName = null
+        buttonAcceptUserName.text = "Aceptar"
+
+        prepareOnboardingViewsForIntro()
+        playOnboardingIntroAnimation()
+
+    }
+
+    /*
+ * Prepara visualmente los elementos del onboarding
+ * antes de iniciar la animación.
+ *
+ * Dejamos ocultos:
+ * - mensaje
+ * - input
+ * - botón
+ *
+ * El botón se desactiva temporalmente para evitar clicks
+ * antes de que termine la entrada visual.
+ */
+    private fun prepareOnboardingViewsForIntro() {
+
+
+        /*
+         * Fondo del onboarding.
+         */
+        lottieOnboardingBackground.alpha = 0f
+        lottieOnboardingBackground.progress = 0f
+
+        /*
+         * Estado inicial del ojo.
+         */
+        lottieOnboardingEye.alpha = 0f
+        lottieOnboardingEye.scaleX = 0.8f
+        lottieOnboardingEye.scaleY = 0.8f
+        lottieOnboardingEye.translationY = 0f
+
+        /*
+         * Reiniciamos la animación para que empiece siempre desde el inicio.
+         */
+        lottieOnboardingEye.progress = 0f
+
+
+        /*
+         * Estado inicial del mensaje.
+         */
+        textOnboardingMessage.alpha = 0f
+        textOnboardingMessage.translationY = 24.dpToPx().toFloat()
+
+        /*
+         * Estado inicial del input.
+         */
+        editUserName.alpha = 0f
+        editUserName.translationY = 24.dpToPx().toFloat()
+
+        /*
+         * Estado inicial del botón.
+         */
+        buttonAcceptUserName.alpha = 0f
+        buttonAcceptUserName.translationY = 24.dpToPx().toFloat()
+        buttonAcceptUserName.isEnabled = false
+    }
+
+
+    /*
+    * Ejecuta la animación inicial del onboarding.
+    *
+    * Secuencia:
+    * 1. El ojo Lottie aparece.
+    * 2. El ojo empieza a reproducirse.
+    * 3. El ojo sube.
+    * 4. Se revela el texto, input y botón.
+    */
+    private fun playOnboardingIntroAnimation() {
+
+        /*
+        * Reproducimos el fondo animado del onboarding.
+        */
+        lottieOnboardingBackground.playAnimation()
+
+        /*
+         * Aparición suave del fondo.
+         */
+        lottieOnboardingBackground.animate()
+            .alpha(1f)
+            .setDuration(350)
+            .start()
+
+
+
+        /*
+         * Arrancamos la animación Lottie del ojo.
+         */
+        lottieOnboardingEye.playAnimation()
+
+        /*
+         * Aparece el ojo con un pequeño aumento de escala.
+         */
+        lottieOnboardingEye.animate()
+            .alpha(1f)
+            .scaleX(1.08f)
+            .scaleY(1.08f)
+            .setDuration(450)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction {
+
+                /*
+                 * El ojo vuelve a tamaño normal y sube.
+                 */
+                lottieOnboardingEye.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .translationY((-72).dpToPx().toFloat())
+                    .setDuration(550)
+                    .setInterpolator(AccelerateDecelerateInterpolator())
+                    .withEndAction {
+
+                        /*
+                         * Cuando el ojo ya está arriba,
+                         * aparecen los elementos del formulario.
+                         */
+                        revealOnboardingForm()
+                    }
+                    .start()
+            }
+            .start()
+    }
+
+
+    /*
+ * Revela progresivamente el contenido del formulario.
+ *
+ * Aparecen:
+ * - texto
+ * - input
+ * - botón
+ */
+    private fun revealOnboardingForm() {
+        /*
+         * Mensaje introductorio.
+         */
+        textOnboardingMessage.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(350)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+
+        /*
+         * Campo de nombre.
+         */
+        editUserName.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(120)
+            .setDuration(350)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+
+        /*
+         * Botón aceptar.
+         */
+        buttonAcceptUserName.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(240)
+            .setDuration(350)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction {
+                /*
+                 * Se habilita solo cuando ya apareció.
+                 */
+                buttonAcceptUserName.isEnabled = true
+            }
+            .start()
+    }
+
+    /*
+     * Oculta onboarding y libera la app
+     */
+    private fun hideOnboarding() {
+    /*
+    * Detenemos la animación para evitar consumo innecesario.
+    */
+        if (::lottieOnboardingEye.isInitialized) {
+            lottieOnboardingEye.cancelAnimation()
+        }
+
+        if (::lottieOnboardingBackground.isInitialized) {
+            lottieOnboardingBackground.cancelAnimation()
+        }
+
+
+        onboardingView.visibility = View.GONE
+
+
+        /*
+             * Al cerrar onboarding, restauramos el botón del drawer.
+             */
+        buttonOpenDrawer.visibility = View.VISIBLE
+        buttonOpenDrawerAura.visibility = View.VISIBLE
+
+    }
+
+    /*
+ * Crea una conversación nueva para este arranque de app.
+ *
+ * Regla ORACLE:
+ * - Cada vez que la app se inicia desde cero, comienza un chat nuevo.
+ * - El user_id se mantiene.
+ * - El session_id cambia por cada nueva sesión de uso.
+ *
+ * Este session_id se enviará al backend en /ask/stream.
+ */
+    private fun startNewConversationForAppLaunch() {
+        lifecycleScope.launch {
+            val newConversation = chatLocalRepository.createNewConversation()
+
+            currentSessionId = newConversation.id
+
+            Log.d(
+                "ORACLE_SESSION",
+                "Nuevo session_id creado para este arranque: ${newConversation.id}"
+            )
+        }
+    }
+
+    /*
+ * Restaura el estado visual de la conversación tras una recreación temporal
+ * de la Activity, como una rotación de pantalla.
+ *
+ * Esto mantiene:
+ * - pregunta mostrada
+ * - respuesta mostrada
+ * - texto pendiente en el input
+ *
+ * No crea ni recupera historial completo todavía.
+ * El historial completo se manejará con Room en los siguientes pasos.
+ */
+    private fun restoreVisibleConversationState(savedInstanceState: Bundle?) {
+        if (savedInstanceState == null) return
+
+        val restoredQuestionText =
+            savedInstanceState.getString(savedQuestionTextStateKey)
+
+        val restoredAnswerText =
+            savedInstanceState.getString(savedAnswerTextStateKey)
+
+        val restoredInputText =
+            savedInstanceState.getString(savedInputTextStateKey)
+
+        val wasLoading =
+            savedInstanceState.getBoolean(savedLoadingStateKey, false)
+
+        if (!restoredQuestionText.isNullOrBlank()) {
+            textQuestion.text = restoredQuestionText
+        }
+
+        if (!restoredAnswerText.isNullOrBlank()) {
+            textAnswer.text = restoredAnswerText
+        }
+
+        if (!restoredInputText.isNullOrBlank()) {
+            editQuestion.setText(restoredInputText)
+            editQuestion.setSelection(editQuestion.text.length)
+        }
+
+        /*
+         * Si la Activity se recreó mientras había carga,
+         * no reanudamos el stream automáticamente en esta fase.
+         *
+         * Dejamos la UI desbloqueada para evitar spinner congelado.
+         */
+        if (wasLoading) {
+            setLoading(false)
+        }
+    }
+
+
 
     /*
     * Cambia el fondo del drawer al siguiente disponible.
@@ -572,16 +1100,122 @@ class MainActivity : AppCompatActivity() {
             }
         }
         /*
- * Botón principal para abrir el panel lateral.
- *
- * Este método evita depender únicamente del gesto desde el borde izquierdo,
- * que puede ser problemático en dispositivos con navegación por gestos
- * o cuando existen overlays/widgets flotantes.
- */
+        * Botón principal para abrir el panel lateral.
+        *
+        * Este método evita depender únicamente del gesto desde el borde izquierdo,
+        * que puede ser problemático en dispositivos con navegación por gestos
+        * o cuando existen overlays/widgets flotantes.
+        */
+
         buttonOpenDrawer.setOnClickListener {
             openDrawer()
         }
-    }
+
+
+        buttonAcceptUserName.setOnClickListener {
+
+            val name = editUserName.text.toString().trim()
+
+            /*
+             * Validación del nombre.
+             *
+             * Reutiliza la función isValidUserName().
+             * Si el nombre no cumple las reglas, no se muestra advertencia
+             * ni se guarda nada.
+             */
+            if (!isValidUserName(name)) {
+
+                /*
+                 * Si el nombre es inválido, se reinicia la advertencia previa.
+                 * Así evitamos confirmar accidentalmente un nombre diferente.
+                 */
+                warnedUserName = null
+                buttonAcceptUserName.text = "Aceptar"
+
+                when {
+                    name.isBlank() -> {
+                        editUserName.error = "Introduce un nombre"
+                    }
+
+                    name.length > 10 -> {
+                        editUserName.error = "Máximo 10 caracteres"
+                    }
+
+                    else -> {
+                        editUserName.error = "Solo letras, números, '-', '_' o '@'"
+                    }
+                }
+
+                return@setOnClickListener
+            }
+
+            /*
+             * Si el usuario aún no ha aceptado la advertencia
+             * para este nombre exacto, mostramos aviso obligatorio.
+             */
+            if (warnedUserName != name) {
+
+                /*
+                 * Aseguramos que el botón vuelva a estado inicial
+                 * antes de mostrar la advertencia para un nombre nuevo.
+                 */
+                buttonAcceptUserName.text = "Aceptar"
+
+                AlertDialog.Builder(this)
+                    .setTitle("Nombre definitivo")
+                    .setMessage(
+                        "El nombre \"$name\" quedará asociado a Oráculo en este dispositivo.\n\n" +
+                                "Y no podrás cambiarlo más adelante.\n\n" +
+                                "Si estás seguro de que este es el nombre con el que deseas que el Oráculo se dirija a ti, pulsa \"Entendido\" y después vuelve a confirmar."
+                    )
+                    .setPositiveButton("Entendido") { dialog, _ ->
+
+                        /*
+                         * Guardamos temporalmente el nombre advertido.
+                         * Todavía NO se guarda en preferencias.
+                         */
+                        warnedUserName = name
+
+                        /*
+                         * Cambiamos el texto del botón para dejar claro
+                         * que el siguiente click será la confirmación final.
+                         */
+                        buttonAcceptUserName.text = "Confirmar nombre"
+
+                        dialog.dismiss()
+                    }
+                    .setNegativeButton("Revisar") { dialog, _ ->
+
+                        /*
+                         * El usuario decide revisar el nombre.
+                         * No se guarda nada.
+                         */
+                        warnedUserName = null
+                        buttonAcceptUserName.text = "Aceptar"
+
+                        dialog.dismiss()
+                    }
+                    .show()
+
+                return@setOnClickListener
+            }
+
+            /*
+             * Si llega aquí, significa que:
+             * - el nombre es válido
+             * - el usuario ya vio la advertencia
+             * - el nombre actual coincide con el nombre advertido
+             *
+             * Ahora sí se guarda definitivamente.
+             */
+            userIdentityStore.saveUserName(name)
+
+            /*
+             * Ocultamos onboarding y liberamos la app.
+             */
+            hideOnboarding()
+        }
+        }
 
     private fun checkBackendHealth() {
         lifecycleScope.launch {
@@ -601,6 +1235,36 @@ class MainActivity : AppCompatActivity() {
                     textAnswer.text = "No se pudo conectar con el backend.\n\nDetalle: ${error.message}"
                 }
         }
+    }
+
+    /*
+    * Valida el nombre del usuario según reglas definidas:
+    *
+    * - Máx 10 caracteres
+    * - Alfanumérico
+    * - Permite tildes
+    * - Permite _ y -
+    * - No vacío
+     */
+    private fun isValidUserName(name: String): Boolean {
+
+        /*
+         * Vacío o solo espacios
+         */
+        if (name.isBlank()) return false
+
+        /*
+         * Longitud máxima
+         */
+        if (name.length > 10) return false
+
+        /*
+         * Regex:
+         * Letras (incluye tildes) + números + _ y -
+         */
+        val regex = Regex("^[a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_@-]+$")
+
+        return regex.matches(name)
     }
 
 
@@ -676,12 +1340,12 @@ class MainActivity : AppCompatActivity() {
          */
         val prefix = when {
             node.title == rootPromptTitle && node.hasChildren -> {
-                if (isExpanded) "▾ 📚 " else "▸ 📚 "
+                if (isExpanded) "⛗ 📚 ➢ " else "⛖ 📚 "
             }
             node.hasChildren -> {
-                if (isExpanded) "▾ 📂 " else "▸ 📂 "
+                if (isExpanded) "📂 ➣ " else "⤨ 📂 "
             }
-            else -> "• 📄 "
+            else -> "➫📄 "
         }
 
         itemView.text = prefix + node.title
@@ -757,18 +1421,7 @@ class MainActivity : AppCompatActivity() {
     /*
      * Gestiona click y doble click en nodos.
      *
-     * Regla V1.5:
-     *
-     * Nodo sin hijos:
-     * - click envía prompt directamente.
-     *
-     * Nodo con hijos:
-     * - click expande/contrae.
-     * - doble click envía prompt del nodo padre.
-     */
-    /*
- * Gestiona click y doble click en nodos.
- *
+
  * Regla:
  * - Nodo sin hijos:
  *   click -> envía prompt directamente.
