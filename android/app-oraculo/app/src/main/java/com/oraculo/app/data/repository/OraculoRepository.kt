@@ -1,17 +1,21 @@
 package com.oraculo.app.data.repository
 
 import com.oraculo.app.data.remote.dto.AskRequest
-import com.oraculo.app.data.remote.network.RetrofitClient
-import com.oraculo.app.data.remote.dto.AskStreamChunkDto
+import com.oraculo.app.data.remote.dto.AskStreamDoneEvent
+import com.oraculo.app.data.remote.dto.AskStreamRequest
 import com.oraculo.app.data.remote.network.NetworkConfig
+import com.oraculo.app.data.remote.network.RetrofitClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.oraculo.app.data.remote.dto.FeedbackRequest
+import com.oraculo.app.data.remote.dto.AskStreamSourceDto
 
 class OraculoRepository {
 
+    //healt adaptado a la version real del contrato healt.json
     suspend fun health(): Result<String> {
         return try {
             val response = RetrofitClient.api.health()
@@ -20,8 +24,17 @@ class OraculoRepository {
                 val body = response.body()
 
                 if (body != null) {
+                    val healthData = body.data
+
                     Result.success(
-                        "Backend: ${body.status}, service: ${body.service}, version: ${body.version}, initialized: ${body.initialized}"
+                        "Backend: ${body.status}, " +
+                                "service: ${healthData?.service}, " +
+                                "docs_count: ${healthData?.docsCount}, " +
+                                "rag_has_content: ${healthData?.ragHasContent}, " +
+                                "groq_configured: ${healthData?.groqConfigured}, " +
+                                "cache_size: ${healthData?.cacheSize}, " +
+                                "questions_today: ${healthData?.questionsToday}, " +
+                                "questions_total: ${healthData?.questionsTotal}"
                     )
                 } else {
                     Result.failure(Exception("Respuesta vacía del backend en /health"))
@@ -113,44 +126,130 @@ class OraculoRepository {
         }
     }
 
-    // este bloque nos ayuda a implementar el efecto de pensando mientras se genera la respuesta
-    // dando un efecto mas natural, fluida y por fragmentos y no de golpe,
+    /*
+ * Envía feedback real al backend.
+ *
+ * Contrato /feedback:
+ * - request_id -> obligatorio
+ * - useful     -> obligatorio
+ * - user_id    -> opcional
+ * - session_id -> opcional
+ * - question   -> opcional
+ * - answer     -> opcional
+ *
+ * En esta fase enviamos:
+ * - request_id
+ * - useful
+ * - user_id
+ * - session_id
+ *
+ * question y answer quedan para una mejora posterior.
+ */
+    suspend fun sendFeedback(
+        requestId: String,
+        useful: Boolean,
+        userId: String?,
+        sessionId: String?
+    ): Result<String> {
+        return try {
+            val response = RetrofitClient.api.feedback(
+                FeedbackRequest(
+                    requestId = requestId,
+                    useful = useful,
+                    userId = userId,
+                    sessionId = sessionId
+                )
+            )
+
+            if (!response.isSuccessful) {
+                return Result.failure(
+                    Exception("HTTP ${response.code()} en /feedback")
+                )
+            }
+
+            val body = response.body()
+
+            if (body?.status != "ok") {
+                return Result.failure(
+                    Exception("Backend error en /feedback")
+                )
+            }
+
+            val message = body.data?.message ?: "Feedback registrado"
+
+            Result.success(message)
+
+        } catch (exception: Exception) {
+            Result.failure(exception)
+        }
+    }
+/*
+ * Versión temporal compatible con la llamada antigua desde MainActivity.
+ *
+ * IMPORTANTE:
+ * Esta función se mantiene para no romper compatibilidad temporal.
+ */
     suspend fun askStream(
         question: String,
         onToken: suspend (String) -> Unit
     ): Result<Unit> {
+        return askStream(
+            question = question,
+            userId = "",
+            sessionId = "",
+            onToken = onToken,
+            onDone = { _, _ -> }
+        )
+    }
+
+
+    /*
+     * Stream principal compatible con el contrato nuevo de /ask/stream.
+     *
+     * Request esperado por backend:
+     * {
+     *   "question": "...",
+     *   "user_id": "...",
+     *   "session_id": "..."
+     * }
+     *
+     * El stream devuelve tokens:
+     * data: {"token": "La ", "done": false}
+     *
+     * Y al final:
+     * data: {
+     *   "token": "",
+     *   "done": true,
+     *   "sources": [...],
+     *   "request_id": "..."
+     * }
+     *
+     * request_id será necesario para feedback.
+     * sources se guardarán localmente para mostrarlas solo en historial.
+     */
+    suspend fun askStream(
+        question: String,
+        userId: String,
+        sessionId: String,
+        onToken: suspend (String) -> Unit,
+        onDone: suspend (String?, List<AskStreamSourceDto>) -> Unit
+    ): Result<Unit> {
         return withContext(Dispatchers.IO) {
             try {
-                /*
-                 * URL del endpoint SSE.
-                 *
-                 * Se usa trimEnd('/') para evitar doble slash si BASE_URL ya termina en '/'.
-                 */
                 val streamUrl = NetworkConfig.BASE_URL.trimEnd('/') + "/ask/stream"
 
-                /*
-                 * Request body compatible con contrato cloud actual.
-                 */
                 val jsonBody = RetrofitClient.gson.toJson(
-                    AskRequest(
+                    AskStreamRequest(
                         question = question,
-                        language = "es",
-                        top_k = 3
+                        userId = userId,
+                        sessionId = sessionId
                     )
                 )
 
-                /*
-                 * Body JSON para POST.
-                 */
                 val requestBody = jsonBody.toRequestBody(
                     "application/json; charset=utf-8".toMediaType()
                 )
 
-                /*
-                 * Request SSE.
-                 *
-                 * Accept: text/event-stream le indica al backend que esperamos streaming.
-                 */
                 val request = Request.Builder()
                     .url(streamUrl)
                     .post(requestBody)
@@ -158,9 +257,6 @@ class OraculoRepository {
                     .addHeader("Content-Type", "application/json; charset=utf-8")
                     .build()
 
-                /*
-                 * Ejecutamos llamada usando OkHttp directo.
-                 */
                 RetrofitClient.client.newCall(request).execute().use { response ->
 
                     if (!response.isSuccessful) {
@@ -174,13 +270,6 @@ class OraculoRepository {
                             Exception("Respuesta vacía en /ask/stream")
                         )
 
-                    /*
-                     * Leemos línea por línea.
-                     *
-                     * Soporta:
-                     * - formato SSE: data: {"token":"...","done":false}
-                     * - formato JSON por línea: {"token":"...","done":false}
-                     */
                     responseBody.charStream().buffered().useLines { lines ->
                         for (rawLine in lines) {
                             val line = rawLine.trim()
@@ -204,23 +293,32 @@ class OraculoRepository {
                             }
 
                             if (payload == "[DONE]") {
+                                onDone(null, emptyList())
                                 break
                             }
 
-                            val chunk = RetrofitClient.gson.fromJson(
+                            val event = RetrofitClient.gson.fromJson(
                                 payload,
-                                AskStreamChunkDto::class.java
+                                AskStreamDoneEvent::class.java
                             )
 
-                            if (chunk.done) {
+                            /*
+                             * Evento final del stream.
+                             *
+                             * Aquí capturamos:
+                             * - request_id
+                             * - sources
+                             */
+                            if (event.done) {
+                                onDone(event.requestId, event.sources)
                                 break
                             }
 
-                            val token = chunk.token
+                            val token = event.token
 
                             if (!token.isNullOrEmpty()) {
                                 onToken(token)
-                                kotlinx.coroutines.delay(25) // delay para efecto de escritura
+                                kotlinx.coroutines.delay(25)
                             }
                         }
                     }
@@ -233,4 +331,5 @@ class OraculoRepository {
             }
         }
     }
+
 }

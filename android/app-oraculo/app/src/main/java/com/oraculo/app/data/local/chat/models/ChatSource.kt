@@ -1,15 +1,22 @@
 package com.oraculo.app.data.local.chat.models
 
 /*
- * Fuente usada por el backend para construir una respuesta.
+ * Fuente asociada a una respuesta del asistente.
  *
- * Coincide con la estructura sources del contrato:
+ * Contrato real observado en /ask/stream:
  * {
+ *   "source": "...",
  *   "label": "...",
- *   "section": "..."
+ *   "version": "..."
  * }
+ *
+ * IMPORTANTE:
+ * En la UI del historial solo mostraremos `label`,
+ * pero internamente guardamos también `sourceFile` y `version`
+ * por si los necesitamos más adelante.
  */
 data class ChatSource(
+    val sourceFile: String?,
     val label: String,
-    val section: String
+    val version: String?
 )

@@ -11,7 +11,7 @@ object UnitThreePromptProvider {
                     title = "La Placa Base",
                     children = listOf(
 
-                        PromptNode("Características de la Placa Base"),
+                        PromptNode("¿Qué características tiene la Placa Base"),
 
                         PromptNode(
                             title = "Factor de forma de la MotherBoard",

@@ -261,11 +261,15 @@ class ChatLocalRepository(
     }
 
     /*
-     * Guarda fuentes asociadas a un mensaje del asistente.
-     *
-     * En streaming puede que no tengamos sources todavía,
-     * pero queda preparado para /ask normal o futuras mejoras.
-     */
+  * Guarda fuentes asociadas a un mensaje del asistente.
+  *
+  * En la persistencia local se conservan:
+  * - sourceFile
+  * - label
+  * - version
+  *
+  * En la UI del historial mostraremos solo `label`.
+  */
     suspend fun saveSourcesForMessage(
         messageId: String,
         sources: List<ChatSource>
@@ -275,8 +279,9 @@ class ChatLocalRepository(
         val entities = sources.map { source ->
             SourceEntity(
                 messageId = messageId,
+                sourceFile = source.sourceFile,
                 label = source.label,
-                section = source.section
+                version = source.version
             )
         }
 
@@ -315,15 +320,34 @@ class ChatLocalRepository(
     }
 
     /*
-     * Marca un feedback como sincronizado después de enviarlo
-     * correctamente a /feedback.
-     */
+ * Marca un feedback como sincronizado después de enviarlo
+ * correctamente a /feedback.
+ *
+ * IMPORTANTE:
+ * - NO cambiamos feedbackState a SYNCED
+ * - conservamos LIKE o DISLIKE para que la UI siga sabiendo
+ *   qué voto se aplicó
+ * - solo marcamos feedbackSynced = true
+ */
     suspend fun markFeedbackAsSynced(messageId: String) {
         val message = messageDao.getMessageById(messageId) ?: return
 
+        /*
+         * Conservamos el estado visual original.
+         *
+         * Si feedbackUseful es true  -> LIKE
+         * Si feedbackUseful es false -> DISLIKE
+         * Si fuera null, dejamos NONE
+         */
+        val preservedState = when (message.feedbackUseful) {
+            true -> FeedbackState.LIKE.name
+            false -> FeedbackState.DISLIKE.name
+            null -> FeedbackState.NONE.name
+        }
+
         messageDao.updateFeedback(
             messageId = messageId,
-            feedbackState = FeedbackState.SYNCED.name,
+            feedbackState = preservedState,
             feedbackUseful = message.feedbackUseful,
             feedbackSynced = true
         )
@@ -339,15 +363,35 @@ class ChatLocalRepository(
             .map { it.toModel() }
     }
 
-    /*
-     * Carga mensajes una sola vez.
-     *
-     * Útil para abrir una conversación antigua en modo lectura.
-     */
+ /*
+  * Carga mensajes una sola vez.
+  *
+  * IMPORTANTE:
+  * En esta versión enriquecemos los mensajes ASSISTANT
+  * con sus fuentes guardadas en Room.
+  *
+  * Esto se usará principalmente para historial en modo lectura.
+  */
     suspend fun getMessagesOnce(conversationId: String): List<ChatMessage> {
-        return messageDao.getMessagesByConversation(conversationId)
-            .map { it.toModel() }
+        val messageEntities = messageDao.getMessagesByConversation(conversationId)
+
+        return messageEntities.map { messageEntity ->
+            val sources = if (messageEntity.role == ChatRole.ASSISTANT.name) {
+                sourceDao.getSourcesByMessage(messageEntity.id).map { sourceEntity ->
+                    ChatSource(
+                        sourceFile = sourceEntity.sourceFile,
+                        label = sourceEntity.label,
+                        version = sourceEntity.version
+                    )
+                }
+            } else {
+                emptyList()
+            }
+
+            messageEntity.toModelWithSources(sources)
+        }
     }
+
 
     /*
      * Construye título mixto:
@@ -422,6 +466,29 @@ class ChatLocalRepository(
             feedbackState = FeedbackState.valueOf(feedbackState),
             feedbackUseful = feedbackUseful,
             sources = emptyList()
+        )
+    }
+
+    /*
+ * Mapeo Entity -> Model con sources reales.
+ *
+ * Se usa principalmente cuando abrimos historial
+ * y queremos mostrar las fuentes asociadas.
+ */
+    private fun MessageEntity.toModelWithSources(
+        sources: List<ChatSource>
+    ): ChatMessage {
+        return ChatMessage(
+            id = id,
+            conversationId = conversationId,
+            role = ChatRole.valueOf(role),
+            content = content,
+            createdAt = createdAt,
+            requestId = requestId,
+            isStreamingComplete = isStreamingComplete,
+            feedbackState = FeedbackState.valueOf(feedbackState),
+            feedbackUseful = feedbackUseful,
+            sources = sources
         )
     }
 }

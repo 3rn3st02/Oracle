@@ -31,7 +31,7 @@ import com.oraculo.app.data.local.chat.db.entities.SourceEntity
         MessageEntity::class,
         SourceEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 abstract class OracleChatDatabase : RoomDatabase() {

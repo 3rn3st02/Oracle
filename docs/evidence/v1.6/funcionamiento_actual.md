@@ -1,4 +1,4 @@
-# ORACLE – Funcionamiento actual v1.6.0
+# ORACLE – Funcionamiento actual v1.6.0 26062026
 
 ## Estado actual de la aplicación
 La versión actual de ORACLE mantiene todavía la interfaz principal de pregunta/respuesta, pero ya incorpora la base técnica del futuro modo conversación.
@@ -139,3 +139,37 @@ La siguiente fase de la app transformará la interfaz actual en un verdadero mod
 - feedback por mensaje
 - integración con contratos backend
 
+## Estado funcional actual de v1.6.0 27062026
+
+La app funciona ya en modo conversación visual principal mediante RecyclerView.
+
+### Flujo actual
+- cada arranque completo crea un nuevo `session_id`
+- el usuario mantiene `user_id` fijo por instalación
+- las preguntas nuevas se envían con:
+  - question
+  - user_id
+  - session_id
+- el stream devuelve:
+  - tokens
+  - request_id final
+  - sources finales
+
+### Chat activo
+- se muestra en RecyclerView
+- permite copiar respuestas
+- permite votar 👍 / 👎
+- sincroniza feedback con backend
+
+### Historial
+- se muestra en RecyclerView
+- es de solo lectura
+- permite copiar
+- muestra la votación ya emitida, sin permitir modificarla
+- muestra sources solo en historial
+- sources visibles usando solo `label`
+
+### Nuevo chat
+- se crea desde botón superior derecho
+- genera nuevo `session_id`
+- conserva el historial anterior en `Conversaciones`

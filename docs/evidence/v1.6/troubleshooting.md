@@ -111,3 +111,58 @@ el stream sobrevive a rotación
 Room compila
 la base local queda inicializada
 
+## 11. Problema: el feedback se sincronizaba pero perdía su estado visual
+### Síntoma
+Después de pulsar 👍 o 👎, el backend respondía OK, pero la UI dejaba de mostrar claramente el voto aplicado.
+
+### Causa
+Al marcar el feedback como sincronizado, se reemplazaba el estado visual por `SYNCED`, perdiendo la distinción entre `LIKE` y `DISLIKE`.
+
+### Solución
+Conservar `LIKE` o `DISLIKE` en `feedbackState` y usar `feedbackSynced=true` solo como marca interna de sincronización.
+
+---
+
+## 12. Problema: los botones 👍 / 👎 eran editables también en historial
+### Síntoma
+Las conversaciones abiertas en modo lectura permitían modificar la votación.
+
+### Solución
+Se añadió un modo `readOnly` al `ChatAdapter`:
+- conversación activa -> copiar + 👍 + 👎 funcionales
+- historial -> copiar funcional, 👍 / 👎 visibles pero bloqueados
+
+---
+
+## 13. Problema: `/health` no reflejaba bien el backend real
+### Síntoma
+Android mostraba `service: null`, `version: null`, `initialized: false`.
+
+### Causa
+El DTO `HealthResponse` no estaba alineado con la respuesta real actual del backend, que devuelve datos anidados en `data`.
+
+### Solución
+Adaptar `HealthResponse` al contrato real:
+- status
+- error
+- data.service
+- data.docs_count
+- data.rag_has_content
+- data.groq_configured
+- data.cache_size
+- data.questions_today
+- data.questions_total
+
+---
+
+## 14. Problema: las sources del stream no coincidían con el modelo local inicial
+### Síntoma
+El backend devolvía sources con:
+- source
+- label
+- version
+
+pero el modelo local inicial esperaba otra estructura.
+
+### Solución
+Adaptar DTO, modelo local y entidad Room al contrato real del stream final.

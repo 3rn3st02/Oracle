@@ -150,3 +150,31 @@ A partir de este punto, la siguiente fase consistirá en:
 6. añadir copiar / 👍 / 👎 por respuesta
 7. conectar `/feedback`
 
+## Validaciones finales de v1.6.0
+
+### Chat visual
+- ✅ El chat activo se muestra en RecyclerView.
+- ✅ Las conversaciones antiguas se abren también en RecyclerView.
+- ✅ El historial se muestra en modo lectura.
+- ✅ El chat activo vuelve automáticamente al enviar una nueva pregunta.
+
+### Nuevo chat
+- ✅ El botón superior derecho crea un nuevo chat.
+- ✅ Se genera un nuevo session_id.
+- ✅ Las conversaciones anteriores permanecen guardadas.
+
+### Feedback
+- ✅ El botón Copiar funciona en conversación activa e historial.
+- ✅ 👍 y 👎 funcionan en conversación activa.
+- ✅ 👍 y 👎 quedan visibles pero bloqueados en historial.
+- ✅ El estado visual del feedback se conserva después de sincronizar.
+- ✅ El backend recibe correctamente request_id + useful.
+
+### Sources
+- ✅ Las sources reales del stream final se guardan en Room.
+- ✅ Las sources se muestran solo en historial.
+- ✅ En historial solo se muestra label.
+- ✅ En conversación activa no se muestran sources.
+
+### Health
+- ✅ /health ya se interpreta con el contrato real anidado en data.

@@ -54,7 +54,7 @@ object UnitOnePromptProvider {
                 PromptNode(
                     title = "Circuito Eléctrico",
                     children = listOf(
-                        PromptNode("Elementos básicos de un circuito"),
+                        PromptNode("¿Qué elementos tiene un circuito"),
                         PromptNode(
                             title = "Circuito en Serie",
                             children = listOf(

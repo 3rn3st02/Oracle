@@ -80,3 +80,19 @@ A partir del checkpoint **v1.6.0**, los siguientes pasos serán:
 ✅ Base conversacional preparada  
 🔄 Pendiente de integrar el stream con `user_id/session_id/request_id` real
 
+## Cierre funcional del checkpoint
+
+La versión v1.6.0 ya incorpora:
+
+- onboarding completo
+- identidad local persistente
+- conversaciones múltiples con Room
+- nuevo session_id por arranque
+- historial local navegable
+- chat visual con RecyclerView
+- nuevo chat desde botón superior derecho
+- copia de respuestas
+- feedback visual y sincronizado con backend
+- sources reales visibles solo en historial
+- contrato /health alineado con backend actual
+

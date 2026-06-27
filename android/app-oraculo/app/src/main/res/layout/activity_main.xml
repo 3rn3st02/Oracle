@@ -114,6 +114,46 @@
 
         </FrameLayout>
 
+        <!-- Botón superior derecho para iniciar nuevo chat -->
+        <FrameLayout
+            android:id="@+id/newChatButtonContainer"
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:layout_marginTop="20dp"
+            android:layout_marginEnd="1dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:elevation="16dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <!-- Aura decorativa del botón de nuevo chat -->
+            <View
+                android:id="@+id/buttonNewChatAura"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_oracle_drawer_button_aura"
+                android:clickable="false"
+                android:focusable="false"
+                android:alpha="0.75" />
+
+            <!-- Botón real de nuevo chat -->
+            <ImageButton
+                android:id="@+id/buttonNewChat"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:background="@android:color/transparent"
+                android:contentDescription="Nuevo chat"
+                android:padding="4dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_new_chat_idle"
+                android:clickable="true"
+                android:focusable="true" />
+
+        </FrameLayout>
+
 
 
         <!-- Contenedor principal del contenido -->
@@ -178,14 +218,26 @@
                 android:id="@+id/textAnswerLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Respuesta:"
+                android:text="Conversación:"
                 android:textColor="#FFFFFF"
                 android:textSize="18sp"
                 android:textStyle="bold"
                 android:layout_marginTop="18dp" />
 
-            <!-- Scroll de respuesta -->
 
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/recyclerChat"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginTop="10dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:overScrollMode="ifContentScrolls"
+                android:paddingBottom="8dp"
+                android:scrollbars="vertical"
+                android:visibility="visible" />
+
+            <!-- Scroll de respuesta -->
             <!-- ProgressBar -->
 
             <ScrollView
@@ -194,7 +246,8 @@
                 android:layout_height="0dp"
                 android:layout_marginTop="10dp"
                 android:layout_weight="1"
-                android:fillViewport="true">
+                android:fillViewport="true"
+                android:visibility="gone">
 
                 <TextView
                     android:id="@+id/textAnswer"

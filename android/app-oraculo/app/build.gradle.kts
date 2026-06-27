@@ -82,10 +82,23 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
+    /*
+ * RecyclerView - necesario para el futuro modo chat.
+ *
+ * Se usará para mostrar:
+ * - mensajes del usuario
+ * - respuestas de ORACLE
+ * - separadores de fecha
+ * - acciones copiar / 👍 / 👎
+ */
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
+
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.3")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.8.3")
 
     implementation("androidx.activity:activity-ktx:1.9.0")
+
+
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 

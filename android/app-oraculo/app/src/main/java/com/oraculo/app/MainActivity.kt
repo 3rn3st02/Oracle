@@ -43,6 +43,22 @@ import com.oraculo.app.data.local.preferences.UserIdentityStore
 import androidx.appcompat.app.AlertDialog
 import com.oraculo.app.data.local.chat.db.OracleChatDatabase
 import com.oraculo.app.data.local.chat.repository.ChatLocalRepository
+import com.oraculo.app.data.local.chat.models.ChatConversation
+import com.oraculo.app.data.local.chat.models.ChatRole
+import android.widget.ImageButton
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.oraculo.app.ui.chat.ChatAdapter
+import android.widget.ScrollView
+import com.oraculo.app.ui.chat.models.ChatUiMapper
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
+import com.oraculo.app.data.local.chat.models.ChatSource
+
+
 
 
 
@@ -74,6 +90,50 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progressBar: ProgressBar
     private lateinit var textQuestion: TextView
     private lateinit var textAnswer: TextView
+
+    /*
+ * RecyclerView preparado para el futuro modo chat.
+ *
+ * En este paso todavía permanece oculto.
+ */
+    private lateinit var recyclerChat: RecyclerView
+
+    /*
+     * Adapter del futuro modo chat.
+     */
+    private lateinit var chatAdapter: ChatAdapter
+
+    /*
+ * ScrollView legacy de respuesta clásica.
+ *
+ * Lo mantendremos aún en el proyecto como fallback,
+ * pero para el chat activo empezaremos a ocultarlo.
+ */
+    private lateinit var scrollAnswer: ScrollView
+
+    /*
+     * Job actual que observa mensajes del chat activo desde Room.
+     *
+     * Se cancela antes de observar otra conversación
+     * para evitar múltiples collect simultáneos.
+     */
+    private var currentChatObserverJob: Job? = null
+
+    /*
+ * Conversación actualmente mostrada en pantalla.
+ *
+ * Puede ser:
+ * - la conversación activa (editable)
+ * - una conversación histórica (solo lectura)
+ */
+    private var displayedConversationId: String? = null
+
+    /*
+     * Indica si la conversación mostrada en pantalla
+     * está en modo solo lectura.
+     */
+    private var isDisplayingReadOnlyConversation: Boolean = false
+
 
         /*
      * DrawerLayout principal de la pantalla
@@ -124,6 +184,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var textOnboardingMessage: TextView
 
 
+    /*
+ * Título raíz para la sección de conversaciones guardadas.
+ */
+    private val conversationsRootTitle = "Chats"
+
+    /*
+     * Lista de conversaciones locales que se mostrarán en el drawer.
+     *
+     * Se alimenta desde Room mediante ChatLocalRepository.
+     */
+    private var drawerConversations: List<ChatConversation> = emptyList()
+
 
     /*
      * Lista de fondos animados del drawer.
@@ -161,6 +233,18 @@ class MainActivity : AppCompatActivity() {
  * ya que ese Lottie crashea por un LinearGradient inválido.
  */
     private lateinit var buttonOpenDrawerAura: View
+
+
+    /*
+    * Botón superior derecho para crear un nuevo chat.
+    */
+    private lateinit var buttonNewChat: ImageButton
+
+    /*
+     * Aura visual del botón de nuevo chat.
+     */
+    private lateinit var buttonNewChatAura: View
+
 
     private lateinit var lottieDrawerBackground: LottieAnimationView
 
@@ -204,6 +288,18 @@ class MainActivity : AppCompatActivity() {
      * que cada arranque completo de la app empiece un chat nuevo.
      */
     private var currentSessionId: String? = null
+
+    /*
+ * Datos de la última respuesta recibida.
+ *
+ * Se usarán más adelante para:
+ * - copiar respuesta
+ * - enviar feedback 👍 / 👎
+ * - asociar feedback al request_id del backend
+ */
+    private var lastAssistantRequestId: String? = null
+    private var lastAskedQuestion: String? = null
+    private var lastAssistantAnswer: String? = null
 
     /*
      * Clave usada para conservar session_id solo durante recreaciones
@@ -272,10 +368,17 @@ class MainActivity : AppCompatActivity() {
          */
         bindViews()
 
+       /*
+        * Preparamos el RecyclerView del futuro modo chat.
+        *
+        * En esta fase aún permanece oculto.
+        */
+        setupChatRecycler()
+
         /*
- * Restaura textos visibles si Android recreó la Activity,
- * por ejemplo al rotar el móvil.
- */
+        * Restaura textos visibles si Android recreó la Activity,
+        * por ejemplo al rotar el móvil.
+        */
         restoreVisibleConversationState(savedInstanceState)
 
 
@@ -324,9 +427,22 @@ class MainActivity : AppCompatActivity() {
         if (!restoredSessionId.isNullOrBlank()) {
             currentSessionId = restoredSessionId
             Log.d("ORACLE_SESSION", "session_id restaurado temporalmente: $restoredSessionId")
+
+            /*
+             * Si Android recreó la Activity, seguimos observando
+             * la misma conversación activa en el RecyclerView.
+             */
+            observeConversationInRecycler(restoredSessionId)
         } else {
             startNewConversationForAppLaunch()
         }
+
+        /*
+         * Observamos las conversaciones locales para mostrarlas
+         * en el panel lateral.
+         */
+        startObservingConversationsForDrawer()
+
         /*
         * Decide si mostrar onboarding
         */
@@ -381,11 +497,15 @@ class MainActivity : AppCompatActivity() {
 
 
         setupPromptDrawer()
-               /*
+
+        /*
          * Inicia la animación suave del aura del botón 🔮.
          */
         setupDrawerButtonAuraAnimation()
-
+        /*
+         * Inicia la animación suave del aura del botón de nuevo chat.
+         */
+        setupNewChatButtonAuraAnimation()
 
 
         /*
@@ -482,9 +602,20 @@ class MainActivity : AppCompatActivity() {
         progressBar = findViewById(R.id.progressBar)
         textQuestion = findViewById(R.id.textQuestion)
         textAnswer = findViewById(R.id.textAnswer)
+
+        scrollAnswer = findViewById(R.id.scrollAnswer)
+
+        /** Adapter del futuro modo chat*/
+        recyclerChat = findViewById(R.id.recyclerChat)
+
         promptTreeContainer = findViewById(R.id.promptTreeContainer)
+        // Desplegables del boton para el panel lateral (boton superior izquierdo)
         buttonOpenDrawer = findViewById(R.id.buttonOpenDrawer)
         buttonOpenDrawerAura = findViewById(R.id.buttonOpenDrawerAura)
+        // Desplegables del boton para Nuevo Chat (boton superior derecho)
+        buttonNewChat = findViewById(R.id.buttonNewChat)
+        buttonNewChatAura = findViewById(R.id.buttonNewChatAura)
+
         lottieDrawerBackground = findViewById(R.id.lottieDrawerBackground)
         /*
         * Vistas del onboarding inicial.
@@ -521,11 +652,13 @@ class MainActivity : AppCompatActivity() {
         onboardingView.visibility = View.VISIBLE
 
         /*
-        * Mientras el onboarding está visible, ocultamos el botón del drawer
+        * Mientras el onboarding está visible botones superiores, ocultamos el botón del drawer y nuevo chat
         * para evitar que se vea o reciba interacción.
         */
         buttonOpenDrawer.visibility = View.GONE
         buttonOpenDrawerAura.visibility = View.GONE
+        buttonNewChat.visibility = View.GONE
+        buttonNewChatAura.visibility = View.GONE
 
         warnedUserName = null
         buttonAcceptUserName.text = "Aceptar"
@@ -722,36 +855,125 @@ class MainActivity : AppCompatActivity() {
 
         onboardingView.visibility = View.GONE
 
-
         /*
-             * Al cerrar onboarding, restauramos el botón del drawer.
-             */
+         * Al cerrar onboarding, restauramos el botón del drawer y nuevo chat
+         */
         buttonOpenDrawer.visibility = View.VISIBLE
         buttonOpenDrawerAura.visibility = View.VISIBLE
+        buttonNewChat.visibility = View.VISIBLE
+        buttonNewChatAura.visibility = View.VISIBLE
+
 
     }
 
     /*
- * Crea una conversación nueva para este arranque de app.
- *
- * Regla ORACLE:
- * - Cada vez que la app se inicia desde cero, comienza un chat nuevo.
- * - El user_id se mantiene.
- * - El session_id cambia por cada nueva sesión de uso.
- *
- * Este session_id se enviará al backend en /ask/stream.
- */
+   * Crea una conversación nueva para este arranque de app.
+   *
+   * Regla ORACLE:
+   * - Cada vez que la app se inicia desde cero, comienza un chat nuevo.
+   * - El user_id se mantiene.
+   * - El session_id cambia por cada nueva sesión de uso.
+   *
+   * Este session_id se enviará al backend en /ask/stream.
+   */
     private fun startNewConversationForAppLaunch() {
         lifecycleScope.launch {
             val newConversation = chatLocalRepository.createNewConversation()
 
             currentSessionId = newConversation.id
 
+            /*
+             * El chat activo empieza a observarse en RecyclerView.
+             */
+            observeConversationInRecycler(newConversation.id)
+
             Log.d(
                 "ORACLE_SESSION",
                 "Nuevo session_id creado para este arranque: ${newConversation.id}"
             )
         }
+    }
+
+    /*
+  * Inicia un nuevo chat desde la acción de UI.
+  *
+  * Regla ORACLE v1.6:
+  * - No borra conversaciones anteriores.
+  * - Crea un nuevo session_id.
+  * - Limpia la pantalla actual.
+  * - El próximo mensaje usará esta nueva conversación.
+  */
+    private fun startNewChatFromDrawer() {
+        lifecycleScope.launch {
+            val newConversation = chatLocalRepository.createNewConversation()
+
+            currentSessionId = newConversation.id
+
+            /*
+             * La nueva conversación activa pasa a mostrarse en RecyclerView.
+             */
+            observeConversationInRecycler(newConversation.id)
+
+            /*
+             * Limpiamos estado visual legacy actual.
+             *
+             * Aunque ya entraremos en modo chat, dejamos estos textos
+             * consistentes por seguridad.
+             */
+
+            textQuestion.text = "Pregunta: todavía no se ha enviado ninguna consulta."
+            editQuestion.text.clear()
+
+            /*
+             * El RecyclerView ya es la interfaz principal.
+             * Dejamos el adapter vacío hasta que entren nuevos mensajes.
+             */
+            chatAdapter.submitItems(emptyList())
+            showChatRecyclerMode()
+
+
+            /*
+             * Limpiamos datos temporales de feedback de la última respuesta.
+             */
+            lastAssistantRequestId = null
+            lastAskedQuestion = null
+            lastAssistantAnswer = null
+
+            drawerLayout.closeDrawer(GravityCompat.START)
+
+            Log.d(
+                "ORACLE_SESSION",
+                "Nuevo chat creado desde botón superior. session_id=${newConversation.id}"
+            )
+        }
+    }
+
+    /*
+ * Reproduce una transición visual breve del botón de nuevo chat.
+ *
+ * Cambia temporalmente la imagen a estado activo,
+ * aplica una pequeña animación y luego vuelve al estado normal.
+ */
+    private fun playNewChatButtonTransition() {
+        buttonNewChat.setImageResource(R.drawable.ic_new_chat_active)
+
+        buttonNewChat.animate()
+            .scaleX(0.86f)
+            .scaleY(0.86f)
+            .rotation(12f)
+            .setDuration(120)
+            .withEndAction {
+                buttonNewChat.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .rotation(0f)
+                    .setDuration(160)
+                    .withEndAction {
+                        buttonNewChat.setImageResource(R.drawable.ic_new_chat_idle)
+                    }
+                    .start()
+            }
+            .start()
     }
 
     /*
@@ -785,9 +1007,15 @@ class MainActivity : AppCompatActivity() {
             textQuestion.text = restoredQuestionText
         }
 
+        /*
+         * textAnswer ya no se usa como interfaz principal.
+         *
+         * Conservamos savedAnswerTextStateKey por compatibilidad temporal,
+         * pero ya no restauramos ese texto en pantalla.
+         
         if (!restoredAnswerText.isNullOrBlank()) {
             textAnswer.text = restoredAnswerText
-        }
+        }*/
 
         if (!restoredInputText.isNullOrBlank()) {
             editQuestion.setText(restoredInputText)
@@ -1020,7 +1248,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
     /*
-     * Anima el aura bajo el botón 🔮.
+     * Anima el aura bajo el botón del panel lateral 🔮🧿.
      *
      * La animación es nativa Android:
      * - escala suavemente el aura
@@ -1079,6 +1307,53 @@ class MainActivity : AppCompatActivity() {
             start()
         }
     }
+
+
+    /*
+     * Anima el aura bajo el botón de nuevo chat.
+     *
+     * Usa la misma idea visual que el botón del drawer:
+     * - escala suave
+     * - alpha respirando
+     * - loop infinito
+     */
+    private fun setupNewChatButtonAuraAnimation() {
+        val scaleX = ObjectAnimator.ofFloat(
+            buttonNewChatAura,
+            View.SCALE_X,
+            1.0f,
+            1.16f
+        )
+
+        val scaleY = ObjectAnimator.ofFloat(
+            buttonNewChatAura,
+            View.SCALE_Y,
+            1.0f,
+            1.16f
+        )
+
+        val alpha = ObjectAnimator.ofFloat(
+            buttonNewChatAura,
+            View.ALPHA,
+            0.45f,
+            0.9f
+        )
+
+        listOf(scaleX, scaleY, alpha).forEach { animator ->
+            animator.duration = 1200L
+            animator.repeatCount = ObjectAnimator.INFINITE
+            animator.repeatMode = ObjectAnimator.REVERSE
+            animator.interpolator = AccelerateDecelerateInterpolator()
+        }
+
+        AnimatorSet().apply {
+            playTogether(scaleX, scaleY, alpha)
+            start()
+        }
+    }
+
+
+
     private fun setupListeners() {
         /*
          * Envío mediante botón.
@@ -1110,6 +1385,13 @@ class MainActivity : AppCompatActivity() {
         buttonOpenDrawer.setOnClickListener {
             openDrawer()
         }
+
+
+        buttonNewChat.setOnClickListener {
+            playNewChatButtonTransition()
+            startNewChatFromDrawer()
+        }
+
 
 
         buttonAcceptUserName.setOnClickListener {
@@ -1231,8 +1513,8 @@ class MainActivity : AppCompatActivity() {
                 // Mensaje cuando no logra establecer coneccion
                 .onFailure { error ->
                     Log.e("ORACULO_API", "HEALTH ERROR: ${error.message}", error)
-                    textBackendStatus.text = "Backend: error de conexión"
-                    textAnswer.text = "No se pudo conectar con el backend.\n\nDetalle: ${error.message}"
+                    textBackendStatus.text = "Hoy no hay respuesta del destino."
+                    textAnswer.text = "El oráculo no ha querido hablar hoy.\n\nDetalle: ${error.message}"
                 }
         }
     }
@@ -1303,18 +1585,471 @@ class MainActivity : AppCompatActivity() {
         )
 
         /*
-         * Limpiamos el contenedor para reconstruir el árbol.
+        * Limpiamos el contenedor para reconstruir el árbol.
          */
         promptTreeContainer.removeAllViews()
 
+
         /*
-         * Renderizamos el nodo raíz.
+         * Acción superior para iniciar conversación nueva.
+         * la dejamos inactiva por agregar animacion de nuevo chat y ya no dentro del draw
+        renderNewChatAction()
+        */
+
+        /*
+         * Primero renderizamos conversaciones locales.
+         */
+        renderConversationsSection()
+
+        /*
+         * Luego renderizamos Temarios sin cambiar su lógica.
          */
         renderPromptNode(
             node = temariosRoot,
             level = 0
         )
     }
+
+    /*
+ * Prepara el RecyclerView del futuro modo chat.
+ *
+ * IMPORTANTE:
+ * - En este paso el RecyclerView aún permanece oculto.
+ * - La UI sigue usando textAnswer y scrollAnswer.
+ * - Dejamos el adapter listo para conectar Room en el siguiente paso.
+ */
+/*
+ * En esta fase:
+ * - copiar ya es funcional
+ * - like/dislike aún quedan preparados pero sin lógica final
+ *
+ * En esta fase:
+ *  * - like/dislike ya se guardan localmente en Room
+ * - la sincronización real con /feedback se hará en el siguiente paso
+ *
+ * En esta fase:
+ * - like/dislike se sincronizan con /feedback cuando hay request_id
+ */
+    private fun setupChatRecycler() {
+        chatAdapter = ChatAdapter(
+            onCopyAssistantMessage = { assistantMessage ->
+                copyAssistantMessageToClipboard(assistantMessage.content)
+            },
+            onLikeAssistantMessage = { assistantMessage ->
+                saveAssistantFeedbackLocally(
+                    assistantMessageId = assistantMessage.id,
+                    requestId = assistantMessage.requestId,
+                    useful = true
+                )
+            },
+            onDislikeAssistantMessage = { assistantMessage ->
+                saveAssistantFeedbackLocally(
+                    assistantMessageId = assistantMessage.id,
+                    requestId = assistantMessage.requestId,
+                    useful = false
+                )
+            }
+        )
+
+        recyclerChat.layoutManager = LinearLayoutManager(this)
+        recyclerChat.adapter = chatAdapter
+        recyclerChat.setHasFixedSize(false)
+    }
+
+    /*
+ * Copia al portapapeles el contenido de una respuesta de ORACLE.
+ *
+ * Se usará desde el callback del ChatAdapter.
+ */
+    private fun copyAssistantMessageToClipboard(
+        text: String
+    ) {
+        if (text.isBlank()) {
+            return
+        }
+
+        val clipboardManager =
+            getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+
+        val clip = ClipData.newPlainText(
+            "Respuesta ORACLE",
+            text
+        )
+
+        clipboardManager.setPrimaryClip(clip)
+
+        /*
+         * Confirmación visual breve.
+         */
+        android.widget.Toast.makeText(
+            this,
+            "La genialidad está en la reinterpretación.",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+
+        Log.d("ORACLE_CHAT_UI", "Las réplicas nunca son tan brillantes como el original.")
+    }
+
+    /*
+     * Guarda feedback local y trata de sincronizarlo con el backend.
+     *
+     * Regla actual:
+     * - solo se llama desde la conversación activa
+     * - en historial los botones están visibles pero bloqueados
+     */
+    private fun saveAssistantFeedbackLocally(
+        assistantMessageId: String,
+        requestId: String?,
+        useful: Boolean
+    ) {
+        lifecycleScope.launch {
+            /*
+             * 1) Guardado local inmediato.
+             *
+             * Esto asegura que la UI se actualice aunque falle la red.
+             */
+            chatLocalRepository.saveLocalFeedback(
+                messageId = assistantMessageId,
+                useful = useful
+            )
+
+            val localFeedbackText = if (useful) {
+                "Este es el impulso que necesitaba para crecer."
+            } else {
+                "Feedback negativo guardado"
+            }
+
+            Toast.makeText(
+                this@MainActivity,
+                localFeedbackText,
+                Toast.LENGTH_SHORT
+            ).show()
+
+            Log.d(
+                "ORACLE_FEEDBACK",
+                "Feedback local guardado. message_id=$assistantMessageId useful=$useful request_id=$requestId"
+            )
+
+            /*
+             * 2) Si no hay request_id, no podemos enviar al backend.
+             *
+             * Dejamos el estado local, y más adelante se podrá
+             * gestionar como pendiente si quieres refinarlo todavía más.
+             */
+            if (requestId.isNullOrBlank()) {
+                Log.w(
+                    "ORACLE_FEEDBACK",
+                    "No se puede sincronizar feedback: request_id nulo para message_id=$assistantMessageId"
+                )
+                return@launch
+            }
+
+            /*
+             * 3) Obtenemos datos de identidad/sesión actuales.
+             */
+            val userId = userIdentityStore.getOrCreateUserId()
+            val sessionId = currentSessionId
+
+            /*
+             * 4) Intentamos enviar feedback real al backend.
+             */
+            val remoteResult = repository.sendFeedback(
+                requestId = requestId,
+                useful = useful,
+                userId = userId,
+                sessionId = sessionId
+            )
+
+            remoteResult
+                .onSuccess { backendMessage ->
+                    /*
+                     * Marcamos como sincronizado solo si backend confirmó OK.
+                     */
+                    chatLocalRepository.markFeedbackAsSynced(assistantMessageId)
+
+                    Log.d(
+                        "ORACLE_FEEDBACK",
+                        "Feedback sincronizado correctamente. message_id=$assistantMessageId backend_message=$backendMessage"
+                    )
+                }
+                .onFailure { error ->
+                    /*
+                     * El feedback ya quedó guardado localmente.
+                     * Todavía no bloqueamos al usuario; solo registramos el fallo.
+                     */
+                    Log.e(
+                        "ORACLE_FEEDBACK",
+                        "Error sincronizando feedback message_id=$assistantMessageId: ${error.message}",
+                        error
+                    )
+                }
+        }
+    }
+
+    /*
+ * Activa el modo visual de chat.
+ *
+ * Oculta la respuesta clásica y muestra el RecyclerView.
+ */
+    private fun showChatRecyclerMode() {
+        recyclerChat.visibility = View.VISIBLE
+        scrollAnswer.visibility = View.GONE
+    }
+
+    /*
+     * Modo legacy desactivado visualmente.
+     *
+     * Conservamos la función para no romper referencias antiguas,
+     * pero la app ya trabaja con RecyclerView como interfaz principal.
+     */
+    private fun showLegacyAnswerMode() {
+        recyclerChat.visibility = View.VISIBLE
+        scrollAnswer.visibility = View.GONE
+    }
+
+    /*
+ * Observa una conversación concreta desde Room y la dibuja
+ * en el RecyclerView como chat real.
+ *
+ * IMPORTANTE:
+ * - Esta función se usa para la conversación activa.
+ * - Cancela cualquier observación anterior.
+ * - Marca el estado visual como conversación editable.
+ */
+    private fun observeConversationInRecycler(
+        conversationId: String
+    ) {
+        currentChatObserverJob?.cancel()
+
+        displayedConversationId = conversationId
+        isDisplayingReadOnlyConversation = false
+        chatAdapter.setReadOnlyMode(false)
+
+        currentChatObserverJob = lifecycleScope.launch {
+            chatLocalRepository.observeMessages(conversationId).collectLatest { messages ->
+                val uiItems = ChatUiMapper.mapMessagesToUiItems(messages)
+
+                chatAdapter.submitItems(uiItems)
+
+                /*
+                 * Activamos visualmente el modo chat real.
+                 */
+                showChatRecyclerMode()
+
+                /*
+                 * Scroll automático al final si hay elementos.
+                 */
+                if (uiItems.isNotEmpty()) {
+                    recyclerChat.scrollToPosition(uiItems.lastIndex)
+                }
+
+                Log.d(
+                    "ORACLE_CHAT_UI",
+                    "Recycler actualizado para conversation_id=$conversationId items=${uiItems.size}"
+                )
+            }
+        }
+    }
+
+
+    /*
+     * Observa las conversaciones locales guardadas en Room
+     * y actualiza el panel lateral cuando cambian.
+     *
+     * Por ahora solo muestra el listado.
+     * En pasos posteriores, cada conversación será clicable
+     * para abrirla en modo lectura.
+     */
+    private fun startObservingConversationsForDrawer() {
+        lifecycleScope.launch {
+            chatLocalRepository.observeConversations().collect { conversations ->
+                drawerConversations = conversations
+
+                /*
+                 * Redibujamos el drawer para reflejar cambios:
+                 * - nuevo chat creado
+                 * - título actualizado con primera pregunta
+                 * - conversaciones ordenadas por updatedAt
+                 */
+                setupPromptDrawer()
+            }
+        }
+    }
+
+    /*
+ * Renderiza la sección "Conversaciones" dentro del drawer.
+ *
+ * En este paso solo se muestra el listado.
+ * La apertura en modo lectura se implementará después.
+ */
+    private fun renderConversationsSection() {
+        val isExpanded = expandedPromptNodes.contains(conversationsRootTitle)
+
+        val headerView = TextView(this)
+
+        headerView.text = if (isExpanded) {
+            "⛗ \uD83D\uDDE8\uFE0F ➢ $conversationsRootTitle"
+        } else {
+            "⛖ \uD83D\uDCAC $conversationsRootTitle"
+        }
+
+        headerView.setTextColor(Color.parseColor("#80D8FF"))
+        headerView.textSize = 22f
+        headerView.setTypeface(null, Typeface.BOLD)
+
+        headerView.setPadding(
+            0,
+            12.dpToPx(),
+            12.dpToPx(),
+            12.dpToPx()
+        )
+
+        headerView.setBackgroundResource(android.R.drawable.list_selector_background)
+
+        headerView.setOnClickListener {
+            if (expandedPromptNodes.contains(conversationsRootTitle)) {
+                expandedPromptNodes.remove(conversationsRootTitle)
+            } else {
+                expandedPromptNodes.add(conversationsRootTitle)
+            }
+
+            setupPromptDrawer()
+        }
+
+        promptTreeContainer.addView(headerView)
+
+        if (!isExpanded) return
+
+        if (drawerConversations.isEmpty()) {
+            val emptyView = TextView(this)
+
+            emptyView.text = "\uD83D\uDC41\uFE0F\u200D\uD83D\uDDE8\uFE0F Sin conversaciones todavía"
+            emptyView.setTextColor(Color.parseColor("#CCCCCC"))
+            emptyView.textSize = 14f
+            emptyView.setPadding(
+                22.dpToPx(),
+                8.dpToPx(),
+                12.dpToPx(),
+                8.dpToPx()
+            )
+
+            promptTreeContainer.addView(emptyView)
+            return
+        }
+
+        drawerConversations.forEach { conversation ->
+            val itemView = TextView(this)
+
+            itemView.text = "\uD83D\uDC41\uFE0F\u200D\uD83D\uDDE8\uFE0F ${conversation.title}"
+            itemView.setTextColor(Color.WHITE)
+            itemView.textSize = 14f
+
+            itemView.setPadding(
+                22.dpToPx(),
+                8.dpToPx(),
+                12.dpToPx(),
+                8.dpToPx()
+            )
+
+
+            /*
+             * Al pulsar una conversación, se abre en modo lectura.
+             *
+             * No cambia currentSessionId.
+             * No continúa el hilo antiguo.
+             */
+            itemView.setBackgroundResource(android.R.drawable.list_selector_background)
+
+            itemView.setOnClickListener {
+                openConversationReadOnly(conversation)
+            }
+
+            promptTreeContainer.addView(itemView)
+
+        }
+    }
+
+    /*
+ * Renderiza la acción "Nuevo chat" en la parte superior del drawer.
+ *
+ * Esta acción crea una nueva conversación local y limpia la pantalla actual.
+ */
+    private fun renderNewChatAction() {
+        val itemView = TextView(this)
+
+        itemView.text = "✦ Nuevo chat"
+        itemView.setTextColor(Color.parseColor("#B2FF59"))
+        itemView.textSize = 18f
+        itemView.setTypeface(null, Typeface.BOLD)
+
+        itemView.setPadding(
+            0,
+            12.dpToPx(),
+            12.dpToPx(),
+            12.dpToPx()
+        )
+
+        itemView.setBackgroundResource(android.R.drawable.list_selector_background)
+
+        itemView.setOnClickListener {
+            startNewChatFromDrawer()
+        }
+
+        promptTreeContainer.addView(itemView)
+    }
+
+    /*
+  * Abre una conversación guardada en modo lectura,
+  * usando el RecyclerView del chat.
+  *
+  * IMPORTANTE:
+  * - No cambia currentSessionId.
+  * - No continúa el hilo antiguo.
+  * - Cancela la observación del chat activo mientras se visualiza
+  *   este historial.
+  *
+  * Si el usuario vuelve a enviar una pregunta nueva,
+  * se restaurará automáticamente el chat activo.
+  */
+    private fun openConversationReadOnly(
+        conversation: ChatConversation
+    ) {
+        lifecycleScope.launch {
+            /*
+             * Cancelamos la observación del chat activo para que
+             * una conversación antigua no sea sobrescrita visualmente.
+             */
+            currentChatObserverJob?.cancel()
+
+            val messages = chatLocalRepository.getMessagesOnce(conversation.id)
+
+            displayedConversationId = conversation.id
+            isDisplayingReadOnlyConversation = true
+            chatAdapter.setReadOnlyMode(true)
+
+            val uiItems = ChatUiMapper.mapMessagesToUiItems(messages)
+
+            chatAdapter.submitItems(uiItems)
+            showChatRecyclerMode()
+
+            if (uiItems.isNotEmpty()) {
+                recyclerChat.scrollToPosition(uiItems.lastIndex)
+            }
+
+            /*
+             * Indicamos en la cabecera que se trata de historial.
+             */
+            textQuestion.text = "Historial: ${conversation.title}"
+
+            drawerLayout.closeDrawer(GravityCompat.START)
+
+            Log.d(
+                "ORACLE_CHAT_DB",
+                "Conversación abierta en Recycler modo lectura: ${conversation.id}, mensajes=${messages.size}"
+            )
+        }
+    }
+
 
     /*
   * Renderiza visualmente un nodo del árbol.
@@ -1340,10 +2075,10 @@ class MainActivity : AppCompatActivity() {
          */
         val prefix = when {
             node.title == rootPromptTitle && node.hasChildren -> {
-                if (isExpanded) "⛗ 📚 ➢ " else "⛖ 📚 "
+                if (isExpanded) "⛗ \uD83D\uDCD6 ➢ " else "⛖ 📚 "
             }
             node.hasChildren -> {
-                if (isExpanded) "📂 ➣ " else "⤨ 📂 "
+                if (isExpanded) "📂 ➣ " else "⤨ \uD83D\uDCC1 "
             }
             else -> "➫📄 "
         }
@@ -1533,10 +2268,23 @@ class MainActivity : AppCompatActivity() {
     private fun sendQuestion() {
         val question = editQuestion.text.toString().trim()
 
+        //Como el ScrollView legacy ya no será visible, ese mensaje dejaría de verse si siguiera escribiéndose en textAnswer.
         if (question.isBlank()) {
-            textAnswer.text = "No hay respuestas correctas para preguntas equivocadas"
+            Toast.makeText(
+                this,
+                "No hay respuestas correctas para preguntas equivocadas",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
+
+
+        /*
+        * Para preguntas reales, mostramos el modo chat.
+        *
+        * El RecyclerView se alimentará desde Room mientras llega el stream.
+        */
+        showChatRecyclerMode()
 
         lifecycleScope.launch {
             /*
@@ -1572,21 +2320,169 @@ class MainActivity : AppCompatActivity() {
 
             Log.d("ORACULO_API", "Colsuntando al oráculo de Delfos : $question")
 
-            val streamResult = repository.askStream(question) { token ->
-                /*
-                 * El stream corre en Dispatchers.IO desde el Repository.
-                 * Para actualizar UI, volvemos al Main thread.
-                 */
-                withContext(Dispatchers.Main) {
-                    if (!firstTokenReceived) {
-                        firstTokenReceived = true
-                        textAnswer.text = ""
+            /*
+    * Obtenemos el user_id persistente por instalación.
+    *
+    * Este valor se mantiene localmente y se enviará al backend.
+    */
+            val userId = userIdentityStore.getOrCreateUserId()
+
+            /*
+             * Obtenemos la conversación activa.
+             *
+             * Regla ORACLE v1.6:
+             * - cada arranque completo crea un nuevo session_id
+             * - si por alguna razón currentSessionId todavía es null,
+             *   creamos una conversación nueva de respaldo
+             */
+            val sessionId = currentSessionId ?: run {
+                val newConversation = chatLocalRepository.createNewConversation()
+                currentSessionId = newConversation.id
+                newConversation.id
+            }
+
+
+            /*
+             * Si el usuario estaba viendo una conversación histórica en modo lectura,
+             * volvemos a enganchar visualmente el Recycler al chat activo antes
+             * de enviar una nueva pregunta.
+             */
+            if (displayedConversationId != sessionId || isDisplayingReadOnlyConversation) {
+                observeConversationInRecycler(sessionId)
+            }
+
+
+            /*
+             * Aquí guardaremos el request_id que llega en el evento final:
+             * done = true
+             */
+            var receivedRequestId: String? = null
+
+            /*
+            * Aquí guardaremos las sources finales del stream.
+            *
+            * Se mostrarán solo en historial.
+            */
+            var receivedSources: List<ChatSource> = emptyList()
+
+
+            /*
+            * Guardamos la pregunta del usuario en historial local.
+            *
+            * Si la pregunta estuviera vacía, ChatLocalRepository devolvería null,
+            * pero aquí ya hemos validado question.isBlank() antes.
+            */
+            chatLocalRepository.saveUserMessage(
+                conversationId = sessionId,
+                question = question
+            )
+
+            /*
+             * Creamos el mensaje del asistente vacío.
+             *
+             * Mientras llegan tokens por streaming, iremos actualizando
+             * este mismo mensaje en Room.
+             */
+            val assistantMessage = chatLocalRepository.createAssistantStreamingMessage(
+                conversationId = sessionId
+            )
+
+            val assistantMessageId = assistantMessage.id
+
+            Log.d(
+                "ORACLE_CHAT_DB",
+                "Mensajes locales creados para session_id=$sessionId assistant_message_id=$assistantMessageId"
+            )
+
+            Log.d(
+                "ORACLE_SESSION",
+                "Enviando /ask/stream con user_id=$userId session_id=$sessionId"
+            )
+
+            val streamResult = repository.askStream(
+                question = question,
+                userId = userId,
+                sessionId = sessionId,
+
+                onToken = { token ->
+                    /*
+                     * El stream corre en Dispatchers.IO desde el Repository.
+                     * Para actualizar UI, volvemos al Main thread.
+                     */
+                    withContext(Dispatchers.Main) {
+                        if (!firstTokenReceived) {
+                            firstTokenReceived = true
+                            textAnswer.text = ""
+                        }
+
+                        answerBuilder.append(token)
+                        textAnswer.text = answerBuilder.toString()
                     }
 
-                    answerBuilder.append(token)
-                    textAnswer.text = answerBuilder.toString()
+                    /*
+                     * Guardamos el contenido acumulado en Room.
+                     *
+                     * Esto permite que el historial local vaya teniendo
+                     * la respuesta completa aunque todavía no tengamos UI de chat.
+                     */
+                    chatLocalRepository.updateAssistantMessageContent(
+                        messageId = assistantMessageId,
+                        content = answerBuilder.toString()
+                    )
+                },
+
+                onDone = { requestId, sources ->
+                    /*
+                     * Capturamos el request_id final del stream.
+                     *
+                     * Este id será necesario para enviar feedback a /feedback.
+                     */
+                    receivedRequestId = requestId
+
+                    /*
+                     * Convertimos las sources reales observadas en el stream
+                     * al modelo local.
+                     *
+                     * En la UI del historial mostraremos solo label,
+                     * pero guardamos también sourceFile y version.
+                     */
+                    receivedSources = sources.mapNotNull { sourceDto ->
+                        val label = sourceDto.label?.trim()
+
+                        if (label.isNullOrBlank()) {
+                            null
+                        } else {
+                            ChatSource(
+                                sourceFile = sourceDto.source,
+                                label = label,
+                                version = sourceDto.version
+                            )
+                        }
+                    }
+
+                    /*
+                     * Guardamos request_id y estado final del mensaje.
+                     */
+                    chatLocalRepository.finalizeAssistantMessage(
+                        messageId = assistantMessageId,
+                        requestId = requestId
+                    )
+
+                    /*
+                     * Guardamos las fuentes asociadas a la respuesta.
+                     */
+                    chatLocalRepository.saveSourcesForMessage(
+                        messageId = assistantMessageId,
+                        sources = receivedSources
+                    )
+
+                    Log.d(
+                        "ORACLE_STREAM",
+                        "Stream finalizado. request_id=$requestId sources=${receivedSources.size}"
+                    )
                 }
-            }
+
+            )
 
             /*
              * Si el stream falla, mostramos error controlado.
@@ -1594,7 +2490,60 @@ class MainActivity : AppCompatActivity() {
             streamResult.onFailure { error ->
                 Log.e("ORACULO_API", "STREAM ERROR: ${error.message}", error)
 
-                textAnswer.text = "Error al consultar en Delfos.\n\nDetalle: ${error.message}"
+                textAnswer.text = "Hoy el oráculo de Delfos guarda silencio.\n\nDetalle: ${error.message}"
+            }
+
+            /*
+             * Si el stream falló, también dejamos constancia local
+             * en el mensaje del asistente.
+             */
+            if (streamResult.isFailure) {
+                val errorText = textAnswer.text.toString()
+
+                chatLocalRepository.updateAssistantMessageContent(
+                    messageId = assistantMessageId,
+                    content = errorText
+                )
+
+                chatLocalRepository.finalizeAssistantMessage(
+                    messageId = assistantMessageId,
+                    requestId = null
+                )
+            }
+
+            /*
+            * Si el stream terminó correctamente, guardamos datos de la última respuesta.
+            *
+            * Estos valores se usarán en pasos posteriores para:
+            * - botón copiar
+            * - botón 👍
+            * - botón 👎
+            * - envío a /feedback
+            */
+            if (streamResult.isSuccess) {
+                /*
+                 * Aseguramos que Room tenga la versión final completa
+                 * del texto generado.
+                 */
+                chatLocalRepository.updateAssistantMessageContent(
+                    messageId = assistantMessageId,
+                    content = answerBuilder.toString()
+                )
+
+                lastAssistantRequestId = receivedRequestId
+                lastAskedQuestion = question
+                lastAssistantAnswer = answerBuilder.toString()
+
+                Log.d(
+                    "ORACLE_FEEDBACK",
+                    "Última respuesta preparada para feedback. request_id=$lastAssistantRequestId"
+                )
+
+                /*
+                 * Diagnóstico temporal:
+                 * confirmamos que Room guardó pregunta y respuesta.
+                 */
+                logCurrentConversationSnapshot(sessionId)
             }
 
             /*
@@ -1608,6 +2557,38 @@ class MainActivity : AppCompatActivity() {
              * Cerramos estado de carga.
              */
             setLoading(false)
+        }
+    }
+
+    /*
+ * Verifica en Logcat el contenido guardado en Room
+ * para la conversación actual.
+ *
+ * Esta función es temporal de diagnóstico.
+ * Sirve para confirmar que:
+ * - se guardó el mensaje USER
+ * - se guardó el mensaje ASSISTANT
+ * - se guardó el request_id final
+ * - se guardó el contenido acumulado de la respuesta
+ */
+    private suspend fun logCurrentConversationSnapshot(
+        sessionId: String
+    ) {
+        val messages = chatLocalRepository.getMessagesOnce(sessionId)
+
+        Log.d(
+            "ORACLE_CHAT_DB",
+            "Snapshot Room para session_id=$sessionId total_mensajes=${messages.size}"
+        )
+
+        messages.forEachIndexed { index, message ->
+            Log.d(
+                "ORACLE_CHAT_DB",
+                "Mensaje[$index] role=${message.role} " +
+                        "request_id=${message.requestId} " +
+                        "streaming_complete=${message.isStreamingComplete} " +
+                        "chars=${message.content.length}"
+            )
         }
     }
 

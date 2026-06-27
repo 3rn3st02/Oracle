@@ -5,11 +5,22 @@ import com.google.gson.annotations.SerializedName
 /*
  * Evento SSE recibido desde /ask/stream.
  *
- * El backend envía tokens así:
- * data: {"token": "La ", "done": false}
+ * Tokens normales:
+ * data: {"token":"...","done":false}
  *
- * Y al final:
- * data: {"token": "", "done": true, "request_id": "..."}
+ * Evento final real observado:
+ * data: {
+ *   "token": "",
+ *   "done": true,
+ *   "sources": [
+ *     {
+ *       "source": "Pruebadoc.txt",
+ *       "label": "Unidad 2: Unidades funcionales de un ordenador",
+ *       "version": "1.0"
+ *     }
+ *   ],
+ *   "request_id": "..."
+ * }
  */
 data class AskStreamDoneEvent(
     @SerializedName("token")
@@ -19,5 +30,8 @@ data class AskStreamDoneEvent(
     val done: Boolean = false,
 
     @SerializedName("request_id")
-    val requestId: String? = null
+    val requestId: String? = null,
+
+    @SerializedName("sources")
+    val sources: List<AskStreamSourceDto> = emptyList()
 )

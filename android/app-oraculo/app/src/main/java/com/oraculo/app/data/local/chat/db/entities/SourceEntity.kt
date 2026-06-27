@@ -8,20 +8,15 @@ import androidx.room.PrimaryKey
 /*
  * Entidad Room para guardar fuentes asociadas a una respuesta.
  *
- * El backend puede devolver sources con esta forma:
+ * Contrato real observado:
  * {
+ *   "source": "...",
  *   "label": "...",
- *   "section": "..."
+ *   "version": "..."
  * }
  *
- * messageId:
- * - Relaciona la fuente con el mensaje ASSISTANT.
- *
- * label:
- * - Nombre visible de la fuente.
- *
- * section:
- * - Fragmento/sección asociada.
+ * Aunque en la UI del historial mostraremos solo `label`,
+ * guardamos también `sourceFile` y `version`.
  */
 @Entity(
     tableName = "message_sources",
@@ -41,6 +36,7 @@ data class SourceEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0L,
     val messageId: String,
+    val sourceFile: String?,
     val label: String,
-    val section: String
+    val version: String?
 )

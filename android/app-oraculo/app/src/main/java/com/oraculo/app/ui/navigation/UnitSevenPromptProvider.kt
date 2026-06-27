@@ -105,7 +105,7 @@ object UnitSevenPromptProvider {
                 /*
                  * 12. Resumen breve para el montaje de una computadora de torre
                  */
-                PromptNode("Resumen breve para el montaje de una computadora de torre")
+                PromptNode("Secuencia de montaje de un ordenador")
             )
         )
     }
