@@ -1012,7 +1012,7 @@ class MainActivity : AppCompatActivity() {
          *
          * Conservamos savedAnswerTextStateKey por compatibilidad temporal,
          * pero ya no restauramos ese texto en pantalla.
-         
+
         if (!restoredAnswerText.isNullOrBlank()) {
             textAnswer.text = restoredAnswerText
         }*/
