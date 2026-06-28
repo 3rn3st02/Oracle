@@ -42,12 +42,102 @@ sealed class ChatUiItem {
      */
 
     data class AssistantMessage(
+        /*
+         * ID visual del bloque que pinta el RecyclerView.
+         *
+         * IMPORTANTE:
+         * Cuando una respuesta larga se divide en varios bloques visuales,
+         * este id identifica el bloque concreto de pantalla.
+         *
+         * Ejemplo futuro:
+         * - mensajeReal_block_0
+         * - mensajeReal_block_1
+         * - mensajeReal_block_2
+         */
         val id: String,
+
+        /*
+         * ID real del mensaje ASSISTANT guardado en Room.
+         *
+         * Este id será el que usemos para:
+         * - guardar feedback local
+         * - sincronizar feedback con backend
+         * - mantener la relación con el request_id real
+         *
+         * Por defecto coincide con id para no romper el código actual.
+         */
+        val originalMessageId: String = id,
+
+        /*
+         * Texto visible de este bloque concreto.
+         *
+         * Si la respuesta se divide visualmente en secciones,
+         * aquí irá solo el texto de esa sección.
+         */
         val content: String,
+
+        /*
+         * Respuesta completa limpia.
+         *
+         * Se usará para el botón copiar.
+         *
+         * Así, aunque visualmente una respuesta larga esté dividida
+         * en varios bloques, copiar seguirá copiando toda la respuesta.
+         *
+         * Por defecto coincide con content para no romper el comportamiento actual.
+         */
+        val fullContent: String = content,
+
+        /*
+         * Timestamp local del mensaje real.
+         *
+         * Se conserva igual que antes para mantener compatibilidad
+         * con el orden visual y el historial.
+         */
         val timestamp: Long,
+
+        /*
+         * request_id real devuelto por el backend al finalizar el stream.
+         *
+         * Normalmente solo el último bloque visual tendrá este valor,
+         * porque solo el último bloque mostrará acciones.
+         */
         val requestId: String?,
+
+        /*
+         * Indica si el stream completo ya terminó.
+         *
+         * Se conserva para mantener la lógica actual:
+         * los botones no aparecen mientras la respuesta sigue llegando.
+         */
         val isStreamingComplete: Boolean,
+
+        /*
+         * Indica si este bloque visual debe mostrar acciones:
+         * copiar / like / dislike / fuentes.
+         *
+         * Regla futura:
+         * - bloques intermedios -> false
+         * - último bloque finalizado -> true
+         *
+         * Por defecto usa isStreamingComplete para no romper
+         * el comportamiento actual antes de tocar el mapper.
+         */
+        val showsActions: Boolean = isStreamingComplete,
+
+        /*
+         * Estado visual del feedback.
+         *
+         * En la solución completa, solo el último bloque reflejará
+         * el estado real del mensaje.
+         */
         val feedbackState: FeedbackState,
+
+        /*
+         * Fuentes visibles en historial.
+         *
+         * En la solución completa, solo el último bloque llevará fuentes.
+         */
         val sourceLabels: List<String> = emptyList()
     ) : ChatUiItem()
 }
