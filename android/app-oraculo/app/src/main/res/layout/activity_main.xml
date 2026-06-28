@@ -376,6 +376,51 @@
 
         </LinearLayout>
 
+        <!--
+                    Overlay propio de mensajes ORACLE.
+
+                    v1.6.5:
+                    - Sustituirá visualmente a los Toast del sistema.
+                    - Se muestra sobre la parte inferior de la pantalla.
+                    - Queda justo encima del composer.
+                    - No bloquea interacción cuando está oculto.
+                    - El texto se actualizará desde MainActivity.kt.
+                -->
+        <FrameLayout
+            android:id="@+id/oracleOverlayMessageContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="28dp"
+            android:layout_marginEnd="28dp"
+            android:layout_marginBottom="12dp"
+            android:visibility="gone"
+            android:alpha="0"
+            android:elevation="48dp"
+            android:translationZ="48dp"
+            android:clickable="false"
+            android:focusable="false"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/composerContainer">
+
+            <!--
+                Caja visual del mensaje.
+            -->
+            <TextView
+                android:id="@+id/oracleOverlayMessageText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_oracle_overlay_message"
+                android:gravity="center"
+                android:maxLines="3"
+                android:ellipsize="end"
+                android:text="Mensaje ORACLE"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:lineSpacingExtra="2dp" />
+
+        </FrameLayout>
+
 
         <!-- ONBOARDING OVERLAY
        Se coloca dentro del layout principal, NO como hijo directo del DrawerLayout.
@@ -476,35 +521,68 @@
             android:paddingBottom="20dp">
 
             <!--
-                Título del drawer.
+                Título dinámico del drawer.
+
+                v1.6.5:
+                - Ya no usamos una marca fija tipo ORACLE.
+                - Este texto será personalizado con variantes aleatorias.
+                - Se maquetó para que soporte frases largas sin romper la UI.
             -->
             <TextView
                 android:id="@+id/drawerTitle"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="24dp"
-                android:text="ORACLE"
+                android:layout_marginBottom="20dp"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:lineSpacingExtra="2dp"
+                android:text="Oráculo invocado por usuario"
                 android:textColor="@android:color/white"
-                android:textSize="24sp"
+                android:textSize="20sp"
                 android:textStyle="bold" />
 
             <!--
-                Placeholder inicial de Unidad 1.
+                Overlay local del drawer.
 
-                En la siguiente fase este TextView será reemplazado
-                o acompañado por una lista expandible.
+                v1.6.5:
+                - Solo se usa para mensajes vinculados al panel lateral.
+                - En esta versión se usa para el mensaje de renombrado.
+                - No sustituye al overlay global.
             -->
+            <FrameLayout
+                android:id="@+id/drawerOverlayMessageContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:visibility="gone"
+                android:clickable="false"
+                android:focusable="false">
+
+                <TextView
+                    android:id="@+id/drawerOverlayMessageText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_oracle_overlay_message"
+                    android:gravity="center"
+                    android:maxLines="3"
+                    android:ellipsize="end"
+                    android:lineSpacingExtra="2dp"
+                    android:text="Mensaje ORACLE del drawer"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp" />
+
+            </FrameLayout>
             <!--
-    Contenedor dinámico del árbol de prompts.
+             Contenedor dinámico del árbol de prompts.
 
-    MainActivity.kt agregará aquí:
-    - Unidad 1
-    - temas
-    - subtemas
-    - nodos expandibles
+             MainActivity.kt agregará aquí:
+             - Unidades
+             - temas
+             - subtemas
+             - nodos expandibles
 
-    El ScrollView permite navegar por listas largas dentro del drawer.
--->
+             El ScrollView permite navegar por listas largas dentro del drawer.
+             -->
             <ScrollView
                 android:id="@+id/drawerScroll"
                 android:layout_width="match_parent"

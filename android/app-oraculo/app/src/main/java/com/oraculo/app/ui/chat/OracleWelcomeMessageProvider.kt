@@ -41,7 +41,7 @@ object OracleWelcomeMessageProvider {
     private val welcomeMessages = listOf(
         "Bienvenido, {usuario}. El oráculo vuelve a abrir los ojos.",
         "Bienvenido, {usuario}, y bienvenido sea el mensaje de hoy.",
-        "Saludos, {usuario}. Abro mi mente a la guía del oráculo.",
+        "Saludos, {usuario}. Abre tu mente a la guía del oráculo.",
         "{usuario}, que la sabiduría fluya en este espacio.",
         "Bienvenido, {usuario}, buscador; tu verdad te espera.",
         "{usuario}, tu pregunta ha sido escuchada; entra.",
@@ -203,19 +203,33 @@ object OracleWelcomeMessageProvider {
     }
 
     /*
-     * Devuelve el título personalizado del drawer.
-     *
-     * Ejemplo:
-     * Oráculo invocado por Álvaro
+      * Variantes aleatorias para el título del drawer.
+      *
+      * v1.6.5:
+      * - Ya no usamos un título fijo.
+      * - El texto cambia aleatoriamente usando el nombre del usuario.
+      * - Se mantiene un tono coherente con ORACLE.
+      */
+    private val drawerTitleMessages = listOf(
+        "Oráculo invocado por {usuario}",
+        "{usuario} ha invocado al oráculo",
+        "Presencia reconocida: {usuario}",
+        "El umbral ha sido abierto por: {usuario}",
+        "{usuario}, tu presencia ha sido aceptada",
+        "Invocación completada: {usuario}"
+    )
+
+    /*
+     * Devuelve un título aleatorio para el drawer.
      */
-    fun getDrawerTitle(
+    fun getRandomDrawerTitle(
         userName: String?
     ): String {
-        val cleanName = cleanUserName(userName)
-
-        return "Oráculo invocado por $cleanName"
+        return personalize(
+            template = drawerTitleMessages.random(),
+            userName = userName
+        )
     }
-
     /*
      * Reemplaza {usuario} por el nombre real.
      */

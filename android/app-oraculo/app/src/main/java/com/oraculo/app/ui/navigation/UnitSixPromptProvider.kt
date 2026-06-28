@@ -13,7 +13,7 @@ object UnitSixPromptProvider {
                 PromptNode(
                     title = "Periféricos de una computadora",
                     children = listOf(
-                        PromptNode("Concepto de periférico "),                              // 1.1
+                        PromptNode("¿Qué es un periférico "),                              // 1.1
                         PromptNode("Como interactúa un periférico con el computador"),      // 1.2
                         PromptNode("Que hace un periférico de una computadora"),            // 1.3
                         PromptNode("De que se encarga los periféricos de una computadora"), // 1.4
@@ -35,7 +35,7 @@ object UnitSixPromptProvider {
                             title = "Periféricos de entrada",
                             children = listOf(
                                 PromptNode("Que hace el usuario con los periféricos de entrada"),      // 2.1.1
-                                PromptNode("Ejemplos de periféricos de entrada (solo los más ")        // 2.1.2
+                                PromptNode("Ejemplos de periféricos de entrada")        // 2.1.2
                             )
                         ),
 
@@ -78,7 +78,7 @@ object UnitSixPromptProvider {
                             title = "Periféricos de Entrada y Salida (E/S) de almacenamiento ",
                             children = listOf(
                                 PromptNode("Que hacen los periféricos de E/S de almacenamiento "), // 2.5.1
-                                PromptNode("Ejemplos de periféricos de E/S de almacenamiento ")   // 2.5.2
+                                PromptNode("Principales de periféricos de E/S de almacenamiento ")   // 2.5.2
                             )
                         ),
 
@@ -89,7 +89,7 @@ object UnitSixPromptProvider {
                             title = "Periféricos de entrada y Salida (E/S) Multifunción",
                             children = listOf(
                                 PromptNode("Que hacen los periféricos de E/S de Multifunción "), // 2.6.1
-                                PromptNode("Ejemplos de periféricos de E/S multifunción ")       // 2.6.2
+                                PromptNode("¿Qué periféricos de E/S multifunción hay? ")       // 2.6.2
                             )
                         )
                     )

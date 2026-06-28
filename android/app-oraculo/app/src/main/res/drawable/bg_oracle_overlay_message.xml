@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Fondo del overlay propio de mensajes ORACLE.
+
+    v1.6.5:
+    - Reemplaza visualmente los Toast del sistema.
+    - Estética glass mate oscura.
+    - Borde azul suave.
+    - Esquinas redondeadas.
+    - Padding interno cómodo para texto breve o medio.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+
+    <!--
+        Fondo oscuro translúcido tipo glass mate.
+    -->
+    <solid android:color="#D010182A" />
+
+    <!--
+        Borde azul suave para mantener identidad ORACLE.
+    -->
+    <stroke
+        android:width="1dp"
+        android:color="#6697CCFF" />
+
+    <!--
+        Esquinas redondeadas suaves.
+    -->
+    <corners android:radius="20dp" />
+
+    <!--
+        Padding interno del panel.
+    -->
+    <padding
+        android:left="16dp"
+        android:top="12dp"
+        android:right="16dp"
+        android:bottom="12dp" />
+
+</shape>

@@ -129,6 +129,46 @@ class ChatLocalRepository(
     }
 
     /*
+     * Renombra una conversación existente.
+     *
+     * Regla:
+     * - si el nuevo título queda vacío tras trim, no se aplica;
+     * - se actualiza también `updatedAt` para reflejar modificación.
+     */
+    suspend fun renameConversation(
+        sessionId: String,
+        newTitle: String
+    ) {
+        val cleanTitle = newTitle.trim()
+
+        if (cleanTitle.isBlank()) {
+            return
+        }
+
+        val now = System.currentTimeMillis()
+
+        conversationDao.updateConversationTitle(
+            sessionId = sessionId,
+            title = cleanTitle,
+            updatedAt = now
+        )
+    }
+
+    /*
+     * Elimina una conversación completa.
+     *
+     * Gracias a las foreign keys con CASCADE:
+     * - se eliminan mensajes;
+     * - al eliminar mensajes, se eliminan fuentes;
+     * - el feedback desaparece porque vive dentro de MessageEntity.
+     */
+    suspend fun deleteConversation(
+        sessionId: String
+    ) {
+        conversationDao.deleteConversation(sessionId)
+    }
+
+    /*
      * Guarda una pregunta válida del usuario.
      *
      * IMPORTANTE:

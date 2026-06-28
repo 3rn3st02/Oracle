@@ -19,7 +19,6 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -57,6 +56,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.oraculo.app.ui.chat.OracleWelcomeMessageProvider
 import com.oraculo.app.ui.chat.models.ChatUiItem
+import android.text.InputType
+
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -74,6 +76,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editQuestion: EditText
     private lateinit var buttonAsk: Button
     private lateinit var progressBar: ProgressBar
+
+    /*
+     * Overlay propio de mensajes ORACLE.
+     *
+     * v1.6.5:
+     * Sustituye visualmente a los Toast del sistema para:
+     * - pregunta vacía
+     * - copiar
+     * - like
+     * - dislike
+     * - error
+     */
+    private lateinit var oracleOverlayMessageContainer: View
+    private lateinit var oracleOverlayMessageText: TextView
+
+    /*
+     * Runnable de auto-ocultación del overlay.
+     *
+     * Se reutiliza para cancelar mensajes anteriores si llega uno nuevo
+     * antes de que desaparezca el panel actual.
+     */
+    private var oracleOverlayHideRunnable: Runnable? = null
+
 
     /*
  * Barra Lottie de carga situada sobre el borde superior
@@ -142,6 +167,18 @@ class MainActivity : AppCompatActivity() {
      * Se personaliza con el nombre guardado durante onboarding.
      */
     private lateinit var drawerTitle: TextView
+
+    /*
+     * Overlay local del drawer.
+     *
+     * v1.6.5:
+     * Solo se usa para mensajes dentro del panel lateral,
+     * por ejemplo tras renombrar una conversación.
+     */
+    private lateinit var drawerOverlayMessageContainer: View
+    private lateinit var drawerOverlayMessageText: TextView
+    private var drawerOverlayHideRunnable: Runnable? = null
+    //
     private val expandedPromptNodes = mutableSetOf<String>()
     private var lastPromptClickTitle: String? = null
     private var lastPromptClickTime: Long = 0L
@@ -178,6 +215,17 @@ class MainActivity : AppCompatActivity() {
 
     private var currentSessionId: String? = null
 
+    /*
+     * ID visual de conversación borrador.
+     *
+     * v1.6.5:
+     * - No se guarda en Room.
+     * - No se usa como session_id real.
+     * - Solo mantiene la UI de un chat "vacío" antes
+     *   de que exista la primera pregunta válida.
+     */
+    private val draftConversationId = "__draft_conversation__"
+
     private var lastAssistantRequestId: String? = null
     private var lastAskedQuestion: String? = null
     private var lastAssistantAnswer: String? = null
@@ -204,7 +252,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         drawerLayout = findViewById(R.id.drawerLayout)
-        expandedPromptNodes.add(rootPromptTitle)
+
+        //se quita la funcion de temarios abierta por defecto, se deja por si se quiere implementar en el futuro
+        //expandedPromptNodes.add(rootPromptTitle)
 
         drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
             override fun onDrawerOpened(drawerView: View) {
@@ -330,6 +380,10 @@ class MainActivity : AppCompatActivity() {
         editQuestion = findViewById(R.id.editQuestion)
         buttonAsk = findViewById(R.id.buttonAsk)
         progressBar = findViewById(R.id.progressBar)
+
+        oracleOverlayMessageContainer = findViewById(R.id.oracleOverlayMessageContainer)
+        oracleOverlayMessageText = findViewById(R.id.oracleOverlayMessageText)
+
         //Nueva animacion de carga desde lottie
         lottieInputLoadingBar = findViewById(R.id.lottieInputLoadingBar)
         textQuestion = findViewById(R.id.textQuestion)
@@ -341,6 +395,10 @@ class MainActivity : AppCompatActivity() {
          * Título superior del drawer.
          */
         drawerTitle = findViewById(R.id.drawerTitle)
+
+        //para opciones de rename delete e input de rename
+        drawerOverlayMessageContainer = findViewById(R.id.drawerOverlayMessageContainer)
+        drawerOverlayMessageText = findViewById(R.id.drawerOverlayMessageText)
 
         buttonOpenDrawer = findViewById(R.id.buttonOpenDrawer)
         buttonOpenDrawerAura = findViewById(R.id.buttonOpenDrawerAura)
@@ -359,17 +417,250 @@ class MainActivity : AppCompatActivity() {
     private fun setupDynamicInputHint() {
         editQuestion.hint = OracleHintProvider.getRandomHint()
     }
+    /*
+         * Muestra el overlay propio de ORACLE con animación de entrada
+         * y auto-ocultación.
+         *
+         * Diseño:
+         * - fade in
+         * - ligero translateY hacia arriba
+         * - auto-hide tras una breve permanencia
+         *
+         * Regla:
+         * - si ya había un mensaje visible, se cancela su salida pendiente;
+         * - el nuevo mensaje reemplaza al anterior;
+         * - si el onboarding está visible, no mostramos el overlay para no competir
+         *   con la pantalla de bienvenida.
+         */
+    private fun showOracleOverlayMessage(message: String) {
+        /*
+         * Si el onboarding está visible, no mostramos el overlay.
+         */
+        if (::onboardingView.isInitialized && onboardingView.visibility == View.VISIBLE) {
+            return
+        }
+
+        /*
+         * Cancelamos cualquier animación previa del contenedor.
+         */
+        oracleOverlayMessageContainer.animate().cancel()
+
+        /*
+         * Cancelamos cualquier auto-hide pendiente.
+         */
+        oracleOverlayHideRunnable?.let { pendingRunnable ->
+            oracleOverlayMessageContainer.removeCallbacks(pendingRunnable)
+        }
+
+        /*
+         * Actualizamos el texto visible.
+         */
+        oracleOverlayMessageText.text = message
+
+        /*
+         * Si estaba oculto, lo dejamos listo para entrar.
+         */
+        if (oracleOverlayMessageContainer.visibility != View.VISIBLE) {
+            oracleOverlayMessageContainer.visibility = View.VISIBLE
+        }
+
+        /*
+         * Estado inicial para animación de entrada.
+         */
+        oracleOverlayMessageContainer.alpha = 0f
+        oracleOverlayMessageContainer.translationY = 16.dpToPx().toFloat()
+
+        /*
+         * Animación de entrada:
+         * - aparece
+         * - sube ligeramente
+         */
+        oracleOverlayMessageContainer.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(220L)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+
+        /*
+         * Programamos salida automática.
+         */
+        oracleOverlayHideRunnable = Runnable {
+            hideOracleOverlayMessage()
+        }
+
+        oracleOverlayMessageContainer.postDelayed(
+            oracleOverlayHideRunnable,
+            2300L
+        )
+    }
 
     /*
-     * Actualiza el título superior del drawer con el nombre del usuario.
+     * Oculta el overlay de mensajes ORACLE.
      *
-     * Regla:
-     * - si existe nombre guardado, usamos título personalizado;
-     * - si no existe nombre válido, el provider aplica fallback interno.
+     * immediate=true:
+     * - lo oculta sin animación
      *
-     * v1.6.4:
-     * Esto da función real al nombre introducido en onboarding
-     * también fuera del chat.
+     * immediate=false:
+     * - fade out
+     * - ligero translateY hacia abajo
+     */
+    private fun hideOracleOverlayMessage(
+        immediate: Boolean = false
+    ) {
+        /*
+         * Cancelamos cualquier auto-hide pendiente.
+         */
+        oracleOverlayHideRunnable?.let { pendingRunnable ->
+            oracleOverlayMessageContainer.removeCallbacks(pendingRunnable)
+        }
+        oracleOverlayHideRunnable = null
+
+        /*
+         * Si ya está oculto, no hacemos nada.
+         */
+        if (oracleOverlayMessageContainer.visibility != View.VISIBLE) {
+            return
+        }
+
+        /*
+         * Cancelamos cualquier animación previa para evitar solapamientos.
+         */
+        oracleOverlayMessageContainer.animate().cancel()
+
+        if (immediate) {
+            oracleOverlayMessageContainer.alpha = 0f
+            oracleOverlayMessageContainer.translationY = 12.dpToPx().toFloat()
+            oracleOverlayMessageContainer.visibility = View.GONE
+            return
+        }
+
+        /*
+         * Animación de salida.
+         */
+        oracleOverlayMessageContainer.animate()
+            .alpha(0f)
+            .translationY(12.dpToPx().toFloat())
+            .setDuration(180L)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction {
+                oracleOverlayMessageContainer.visibility = View.GONE
+            }
+            .start()
+    }
+
+    /*
+     * Aplica estilo visual ORACLE a un AlertDialog.
+     *
+     * - fondo coherente con el overlay;
+     * - botones con color acorde;
+     * - input opcional estilizado.
+     */
+    private fun styleOracleDialog(
+        dialog: AlertDialog,
+        input: EditText? = null
+    ) {
+        dialog.window?.setBackgroundDrawableResource(R.drawable.bg_oracle_overlay_message)
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(Color.WHITE)
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(Color.parseColor("#80D8FF"))
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(Color.parseColor("#80D8FF"))
+        }
+
+        input?.apply {
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#7F8DAE"))
+            setBackgroundResource(R.drawable.bg_oracle_dialog_input)
+            setPadding(
+                14.dpToPx(),
+                12.dpToPx(),
+                14.dpToPx(),
+                12.dpToPx()
+            )
+        }
+    }
+
+    /*
+     * Muestra el overlay local del drawer.
+     *
+     * Se usa cuando el panel lateral debe permanecer abierto
+     * y queremos mostrar feedback visual encima del mismo drawer.
+     */
+    private fun showDrawerOverlayMessage(message: String) {
+        drawerOverlayMessageText.animate().cancel()
+
+        drawerOverlayHideRunnable?.let { pendingRunnable ->
+            drawerOverlayMessageContainer.removeCallbacks(pendingRunnable)
+        }
+
+        drawerOverlayMessageText.text = message
+        drawerOverlayMessageContainer.visibility = View.VISIBLE
+
+        drawerOverlayMessageText.alpha = 0f
+        drawerOverlayMessageText.translationY = 12.dpToPx().toFloat()
+
+        drawerOverlayMessageText.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(220L)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .start()
+
+        drawerOverlayHideRunnable = Runnable {
+            hideDrawerOverlayMessage()
+        }
+
+        drawerOverlayMessageContainer.postDelayed(
+            drawerOverlayHideRunnable,
+            2100L
+        )
+    }
+
+    /*
+     * Oculta el overlay local del drawer.
+     */
+    private fun hideDrawerOverlayMessage(
+        immediate: Boolean = false
+    ) {
+        drawerOverlayHideRunnable?.let { pendingRunnable ->
+            drawerOverlayMessageContainer.removeCallbacks(pendingRunnable)
+        }
+        drawerOverlayHideRunnable = null
+
+        if (drawerOverlayMessageContainer.visibility != View.VISIBLE) {
+            return
+        }
+
+        drawerOverlayMessageText.animate().cancel()
+
+        if (immediate) {
+            drawerOverlayMessageText.alpha = 0f
+            drawerOverlayMessageText.translationY = 10.dpToPx().toFloat()
+            drawerOverlayMessageContainer.visibility = View.GONE
+            return
+        }
+
+        drawerOverlayMessageText.animate()
+            .alpha(0f)
+            .translationY(10.dpToPx().toFloat())
+            .setDuration(180L)
+            .setInterpolator(AccelerateDecelerateInterpolator())
+            .withEndAction {
+                drawerOverlayMessageContainer.visibility = View.GONE
+            }
+            .start()
+    }
+
+
+
+    /*
+     * Actualiza el título superior del drawer con una variante aleatoria
+     * basada en el nombre del usuario.
+     *
+     * v1.6.5:
+     * - Ya no usamos un texto fijo.
+     * - El drawer mostrará una frase aleatoria cada vez que se actualice.
      */
     private fun updateDrawerTitleWithUserName() {
         /*
@@ -378,13 +669,15 @@ class MainActivity : AppCompatActivity() {
         val userName = getPersonalizedUserNameOrNull()
 
         /*
-         * Construimos el texto final usando el provider central.
+         * Construimos el texto final usando una variante aleatoria.
          */
-        drawerTitle.text = OracleWelcomeMessageProvider.getDrawerTitle(userName)
+        drawerTitle.text = OracleWelcomeMessageProvider.getRandomDrawerTitle(userName)
     }
+
 
     private fun showOnboarding() {
         onboardingView.visibility = View.VISIBLE
+        hideOracleOverlayMessage(immediate = true)
         buttonOpenDrawer.visibility = View.GONE
         buttonOpenDrawerAura.visibility = View.GONE
         buttonNewChat.visibility = View.GONE
@@ -483,78 +776,84 @@ class MainActivity : AppCompatActivity() {
         buttonNewChatAura.visibility = View.VISIBLE
     }
 
+    /*
+      * Inicia la app en modo chat borrador.
+      *
+      * v1.6.5:
+      * - Ya NO crea conversación vacía en Room al arrancar.
+      * - Solo prepara la bienvenida efímera.
+      * - La conversación real se creará cuando llegue la primera pregunta válida.
+      */
     private fun startNewConversationForAppLaunch() {
-        lifecycleScope.launch {
-            val newConversation = chatLocalRepository.createNewConversation()
+        /*
+         * No existe sesión persistida todavía.
+         */
+        currentSessionId = null
 
-            currentSessionId = newConversation.id
+        /*
+         * Preparamos la bienvenida efímera sobre el draft.
+         */
+        prepareEphemeralWelcomeForConversation(draftConversationId)
 
-            /*
-             * Generamos una bienvenida efímera para esta conversación.
-             *
-             * No se guarda en Room.
-             * Solo se mostrará visualmente en el chat activo.
-             */
-            prepareEphemeralWelcomeForConversation(newConversation.id)
+        /*
+         * Mostramos el estado visual inicial sin tocar Room.
+         */
+        showDraftConversationState()
 
-            /*
-             * El chat activo empieza a observarse en RecyclerView.
-             */
-            observeConversationInRecycler(newConversation.id)
-
-            Log.d(
-                "ORACLE_SESSION",
-                "Nuevo session_id creado para este arranque: ${newConversation.id}"
-            )
-        }
+        Log.d(
+            "ORACLE_SESSION",
+            "Arranque en modo draft: no se crea conversación hasta la primera pregunta válida."
+        )
     }
 
+    /*
+      * Inicia un nuevo chat en modo borrador.
+      *
+      * v1.6.5:
+      * - Ya NO crea conversación vacía en Room.
+      * - Solo limpia el estado actual.
+      * - La conversación real nacerá con la primera pregunta válida.
+      */
     private fun startNewChatFromDrawer() {
-        lifecycleScope.launch {
-            val newConversation = chatLocalRepository.createNewConversation()
+        /*
+         * Invalidamos la sesión persistida actual.
+         *
+         * La próxima pregunta válida creará una nueva conversación real.
+         */
+        currentSessionId = null
 
-            currentSessionId = newConversation.id
+        /*
+         * Preparamos nueva bienvenida efímera sobre el draft.
+         */
+        prepareEphemeralWelcomeForConversation(draftConversationId)
 
-            /*
-             * Generamos bienvenida efímera para el nuevo chat.
-             *
-             * No se guarda en Room.
-             */
-            prepareEphemeralWelcomeForConversation(newConversation.id)
+        /*
+         * Mostramos el estado visual limpio del nuevo chat.
+         */
+        showDraftConversationState()
 
-            /*
-             * La nueva conversación activa pasa a mostrarse en RecyclerView.
-             */
-            observeConversationInRecycler(newConversation.id)
+        /*
+         * Limpiamos input visible.
+         */
+        editQuestion.text.clear()
 
-            /*
-             * Limpiamos estado visual legacy actual.
-             */
-            textQuestion.text = "Pregunta: todavía no se ha enviado ninguna consulta."
-            editQuestion.text.clear()
+        /*
+         * Limpiamos datos temporales de feedback
+         * de la última respuesta persistida.
+         */
+        lastAssistantRequestId = null
+        lastAskedQuestion = null
+        lastAssistantAnswer = null
 
-            /*
-             * Dejamos el adapter vacío y en modo chat.
-             *
-             * La bienvenida efímera aparecerá mediante observeConversationInRecycler().
-             */
-            chatAdapter.submitItems(emptyList())
-            showChatRecyclerMode()
+        /*
+         * Cerramos el drawer.
+         */
+        drawerLayout.closeDrawer(GravityCompat.START)
 
-            /*
-             * Limpiamos datos temporales de feedback de la última respuesta.
-             */
-            lastAssistantRequestId = null
-            lastAskedQuestion = null
-            lastAssistantAnswer = null
-
-            drawerLayout.closeDrawer(GravityCompat.START)
-
-            Log.d(
-                "ORACLE_SESSION",
-                "Nuevo chat creado desde botón superior. session_id=${newConversation.id}"
-            )
-        }
+        Log.d(
+            "ORACLE_SESSION",
+            "Nuevo chat en modo draft: todavía no existe session_id persistido."
+        )
     }
 
     private fun playNewChatButtonTransition() {
@@ -716,6 +1015,56 @@ class MainActivity : AppCompatActivity() {
         currentWelcomeMessageConversationId = null
     }
 
+    /*
+     * Muestra el estado visual del chat borrador.
+     *
+     * v1.6.5:
+     * - No observa Room.
+     * - No persiste conversación.
+     * - Puede mostrar bienvenida efímera.
+     * - Se usa al iniciar la app y al crear nuevo chat,
+     *   antes de que exista una pregunta válida.
+     */
+    private fun showDraftConversationState() {
+        /*
+         * Cancelamos cualquier observador anterior porque
+         * el draft no vive en Room.
+         */
+        currentChatObserverJob?.cancel()
+
+        /*
+         * Marcamos el draft como conversación visual actual.
+         */
+        displayedConversationId = draftConversationId
+        isDisplayingReadOnlyConversation = false
+        chatAdapter.setReadOnlyMode(false)
+
+        /*
+         * Construimos la lista visual del draft.
+         *
+         * Puede contener bienvenida efímera, pero no mensajes reales.
+         */
+        val uiItems = mutableListOf<ChatUiItem>()
+
+        val welcomeItem = buildEphemeralWelcomeUiItem(draftConversationId)
+        if (welcomeItem != null) {
+            uiItems.add(welcomeItem)
+        }
+
+        chatAdapter.submitItems(uiItems)
+        showChatRecyclerMode()
+
+        /*
+         * Restauramos textos base del chat vacío.
+         */
+        textQuestion.text = "Pregunta: todavía no se ha enviado ninguna consulta."
+        textAnswer.text = "La respuesta aparecerá aquí."
+
+        /*
+         * Un draft nuevo vuelve a permitir auto-scroll normal.
+         */
+        shouldAutoScrollChat = true
+    }
     private fun switchDrawerBackground() {
         lottieDrawerBackground.animate().cancel()
         currentBackgroundIndex = (currentBackgroundIndex + 1) % drawerBackgrounds.size
@@ -1044,15 +1393,13 @@ class MainActivity : AppCompatActivity() {
          */
         val userName = getPersonalizedUserNameOrNull()
 
+
         /*
-         * Mensaje de confirmación manteniendo el mismo estilo visual actual
-         * del aviso inferior, porque seguimos usando Toast.
+         * Mensaje de confirmación usando el overlay propio. Quitando Toast
          */
-        Toast.makeText(
-            this,
-            OracleWelcomeMessageProvider.getCopyFeedbackMessage(userName),
-            Toast.LENGTH_SHORT
-        ).show()
+        showOracleOverlayMessage(
+            OracleWelcomeMessageProvider.getCopyFeedbackMessage(userName)
+        )
 
         /*
          * Log de diagnóstico.
@@ -1091,11 +1438,8 @@ class MainActivity : AppCompatActivity() {
                 OracleWelcomeMessageProvider.getDislikeFeedbackMessage(userName)
             }
 
-            Toast.makeText(
-                this@MainActivity,
-                localFeedbackText,
-                Toast.LENGTH_SHORT
-            ).show()
+            //Quitamos toast y remplazamos por vista overlay propia.
+            showOracleOverlayMessage(localFeedbackText)
 
             Log.d(
                 "ORACLE_FEEDBACK",
@@ -1335,14 +1679,33 @@ class MainActivity : AppCompatActivity() {
             itemView.textSize = 14f
             itemView.setPadding(22.dpToPx(), 8.dpToPx(), 12.dpToPx(), 8.dpToPx())
             itemView.setBackgroundResource(android.R.drawable.list_selector_background)
+
+            /*
+                         * Click normal:
+                         * abre la conversación en modo lectura.
+                         */
             itemView.setOnClickListener {
                 openConversationReadOnly(conversation)
             }
+
+            /*
+             * Long press:
+             * abre menú de acciones SOLO para Chats.
+             *
+             * No afecta a Temarios porque esto solo vive
+             * dentro de renderConversationsSection().
+             */
+            itemView.setOnLongClickListener {
+                showConversationActionsDialog(conversation)
+                true
+            }
+
             promptTreeContainer.addView(itemView)
         }
     }
 
-    private fun renderNewChatAction() {
+
+        private fun renderNewChatAction() {
         val itemView = TextView(this)
         itemView.text = "✦ Nuevo chat"
         itemView.setTextColor(Color.parseColor("#B2FF59"))
@@ -1355,6 +1718,221 @@ class MainActivity : AppCompatActivity() {
         }
         promptTreeContainer.addView(itemView)
     }
+
+    /*
+     * Muestra el selector custom de acciones para una conversación del drawer.
+     *
+     * IMPORTANTE:
+     * - Solo aplica al nodo Chats.
+     * - No aplica a Temarios.
+     * - El selector ya usa estilo ORACLE propio.
+     */
+    private fun showConversationActionsDialog(
+        conversation: ChatConversation
+    ) {
+        val dialogView = layoutInflater.inflate(
+            R.layout.view_oracle_conversation_actions,
+            null
+        )
+
+        val renameView = dialogView.findViewById<TextView>(R.id.actionRenameConversation)
+        val deleteView = dialogView.findViewById<TextView>(R.id.actionDeleteConversation)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(conversation.title)
+            .setView(dialogView)
+            .setNegativeButton("Cancelar") { dialogInterface, _ ->
+                dialogInterface.dismiss()
+            }
+            .create()
+
+        renameView.setOnClickListener {
+            dialog.dismiss()
+            showRenameConversationDialog(conversation)
+        }
+
+        deleteView.setOnClickListener {
+            dialog.dismiss()
+            showDeleteConversationConfirmationDialog(conversation)
+        }
+
+        dialog.show()
+        styleOracleDialog(dialog)
+    }
+
+    /*
+     * Muestra diálogo para renombrar una conversación.
+     *
+     * El drawer permanece abierto y el feedback visual
+     * se muestra con overlay local del drawer.
+     */
+    private fun showRenameConversationDialog(
+        conversation: ChatConversation
+    ) {
+        val input = EditText(this).apply {
+            setText(conversation.title)
+            setSelection(text.length)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            hint = "Nuevo nombre de conversación"
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Renombrar conversación")
+            .setView(input)
+            .setPositiveButton("Guardar") { dialogInterface, _ ->
+                val newTitle = input.text?.toString().orEmpty().trim()
+
+                if (newTitle.isBlank()) {
+                    showDrawerOverlayMessage("El oráculo no puede nombrar el vacío.")
+                    dialogInterface.dismiss()
+                    return@setPositiveButton
+                }
+
+                lifecycleScope.launch {
+                    chatLocalRepository.renameConversation(
+                        sessionId = conversation.id,
+                        newTitle = newTitle
+                    )
+
+                    /*
+                     * Si la conversación renombrada está abierta en modo historial,
+                     * actualizamos la cabecera superior.
+                     */
+                    if (displayedConversationId == conversation.id && isDisplayingReadOnlyConversation) {
+                        textQuestion.text = "Historial: $newTitle"
+                    }
+
+                    /*
+                     * El drawer se queda abierto y mostramos feedback local
+                     * encima del propio drawer.
+                     */
+                    showDrawerOverlayMessage("El futuro no esta escrito, tú me ayudas a escribirlo y tú me ayudas a acabarlo.")
+                }
+
+                dialogInterface.dismiss()
+            }
+            .setNegativeButton("Cancelar") { dialogInterface, _ ->
+                dialogInterface.dismiss()
+            }
+            .create()
+
+        dialog.show()
+        styleOracleDialog(dialog, input)
+    }
+
+    /*
+     * Muestra confirmación antes de eliminar una conversación.
+     *
+     * Este flujo mantiene el comportamiento actual:
+     * - se cierra el drawer;
+     * - se usa el overlay global para el mensaje final.
+     */
+    private fun showDeleteConversationConfirmationDialog(
+        conversation: ChatConversation
+    ) {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Eliminar conversación")
+            .setMessage(
+                "Se eliminará la conversación \"${conversation.title}\" junto con sus mensajes y fuentes asociadas."
+            )
+            .setPositiveButton("Eliminar") { dialogInterface, _ ->
+                lifecycleScope.launch {
+                    deleteConversationFromDrawer(conversation)
+                }
+                dialogInterface.dismiss()
+            }
+            .setNegativeButton("Cancelar") { dialogInterface, _ ->
+                dialogInterface.dismiss()
+            }
+            .create()
+
+        dialog.show()
+        styleOracleDialog(dialog)
+    }
+
+
+
+    /*
+     * Elimina una conversación desde el drawer.
+     *
+     * Si la conversación eliminada es la actualmente visible:
+     * - cancelamos observación;
+     * - limpiamos UI;
+     * - dejamos session activa a null;
+     * - la próxima pregunta válida reconstruirá contexto.
+     */
+    private suspend fun deleteConversationFromDrawer(
+        conversation: ChatConversation
+    ) {
+        val wasCurrentlyDisplayed = displayedConversationId == conversation.id
+        val wasCurrentSession = currentSessionId == conversation.id
+
+        /*
+         * Borrado real en Room.
+         *
+         * Gracias a CASCADE:
+         * - caen mensajes
+         * - caen fuentes
+         * - cae feedback implícito en mensajes
+         */
+        chatLocalRepository.deleteConversation(conversation.id)
+
+        /*
+         * Si el usuario estaba viendo esa misma conversación,
+         * limpiamos el estado visible para no dejar la UI apuntando
+         * a una conversación ya borrada.
+         */
+        if (wasCurrentlyDisplayed) {
+            currentChatObserverJob?.cancel()
+            displayedConversationId = null
+            isDisplayingReadOnlyConversation = false
+            chatAdapter.setReadOnlyMode(false)
+
+            /*
+             * Si además era la sesión activa, la invalidamos.
+             *
+             * La próxima pregunta válida creará conversación nueva.
+             */
+            if (wasCurrentSession) {
+                currentSessionId = null
+            }
+
+            /*
+                         * Reiniciamos la bienvenida efímera sobre el draft.
+                         */
+            prepareEphemeralWelcomeForConversation(draftConversationId)
+
+            /*
+             * Volvemos al estado visual de chat borrador,
+             * sin conversación persistida.
+             */
+            showDraftConversationState()
+
+            /*
+             * Limpiamos input visible.
+             */
+            editQuestion.text.clear()
+
+            /*
+             * Limpiamos estado de feedback temporal.
+             */
+            lastAssistantRequestId = null
+            lastAskedQuestion = null
+            lastAssistantAnswer = null
+        }
+
+        /*
+         * Cerramos drawer y notificamos visualmente.
+         */
+        drawerLayout.closeDrawer(GravityCompat.START)
+        showOracleOverlayMessage("La conversación ha sido borrada del destino.")
+
+        Log.d(
+            "ORACLE_CHAT_DB",
+            "Conversación eliminada desde drawer: ${conversation.id}"
+        )
+    }
+
 
     private fun openConversationReadOnly(conversation: ChatConversation) {
         lifecycleScope.launch {
@@ -1555,18 +2133,14 @@ class MainActivity : AppCompatActivity() {
              */
             val userName = getPersonalizedUserNameOrNull()
 
-            /*
-             * Mensaje visual personalizado para pregunta vacía.
-             *
-             * Mantenemos Toast para conservar el mismo estilo visual
-             * inferior que ya muestra la app actualmente.
-             */
-            Toast.makeText(
-                this,
-                OracleWelcomeMessageProvider.getRandomEmptyQuestionMessage(userName),
-                Toast.LENGTH_SHORT
-            ).show()
 
+            /*
+             * Mensaje visual personalizado para pregunta vacía
+             * usando el overlay propio de ORACLE.
+             */
+            showOracleOverlayMessage(
+                OracleWelcomeMessageProvider.getRandomEmptyQuestionMessage(userName)
+            )
             return
         }
 
@@ -1590,24 +2164,70 @@ class MainActivity : AppCompatActivity() {
             Log.d("ORACULO_API", "Colsuntando al oráculo de Delfos : $question")
 
             val userId = userIdentityStore.getOrCreateUserId()
-            val sessionId = currentSessionId ?: run {
+
+            /*
+             * Si no existe conversación persistida todavía,
+             * la creamos solo ahora, porque ya tenemos
+             * una pregunta válida real.
+             *
+             * v1.6.5:
+             * Esto evita almacenar chats vacíos.
+             */
+            val sessionId = if (currentSessionId.isNullOrBlank()) {
                 val newConversation = chatLocalRepository.createNewConversation()
                 currentSessionId = newConversation.id
+
+                /*
+                 * Si había bienvenida efímera en modo draft,
+                 * la migramos visualmente a la nueva conversación real
+                 * para seguir mostrándola al principio del chat.
+                 */
+                if (!currentWelcomeMessageText.isNullOrBlank()) {
+                    currentWelcomeMessageConversationId = newConversation.id
+                } else {
+                    prepareEphemeralWelcomeForConversation(newConversation.id)
+                }
+
+                Log.d(
+                    "ORACLE_SESSION",
+                    "Primera pregunta válida: se crea conversación real session_id=${newConversation.id}"
+                )
+
                 newConversation.id
+            } else {
+                currentSessionId!!
             }
 
+            /*
+             * Si la conversación visible no coincide con la activa,
+             * o estábamos en modo historial, reanudamos observación
+             * de la conversación real.
+             */
             if (displayedConversationId != sessionId || isDisplayingReadOnlyConversation) {
                 observeConversationInRecycler(sessionId)
             }
 
+            /*
+             * Variables que se rellenarán al finalizar el stream.
+             */
             var receivedRequestId: String? = null
             var receivedSources: List<ChatSource> = emptyList()
 
+            /*
+             * Guardamos el mensaje del usuario en Room.
+             *
+             * A estas alturas la conversación ya existe
+             * porque la pregunta es válida.
+             */
             chatLocalRepository.saveUserMessage(
                 conversationId = sessionId,
                 question = question
             )
 
+            /*
+             * Creamos el mensaje placeholder del asistente
+             * que se irá rellenando durante el streaming.
+             */
             val assistantMessage = chatLocalRepository.createAssistantStreamingMessage(
                 conversationId = sessionId
             )
@@ -1623,6 +2243,9 @@ class MainActivity : AppCompatActivity() {
                 "Enviando /ask/stream con user_id=$userId session_id=$sessionId"
             )
 
+            /*
+             * Llamada real al stream del backend.
+             */
             val streamResult = repository.askStream(
                 question = question,
                 userId = userId,
@@ -1685,17 +2308,24 @@ class MainActivity : AppCompatActivity() {
 
                 /*
                  * Mensaje visual personalizado de error.
-                 *
-                 * Mantenemos detalle técnico al final porque sigue siendo útil
-                 * durante pruebas y debugging.
                  */
                 val personalizedErrorMessage =
                     OracleWelcomeMessageProvider.getRandomErrorMessage(userName)
 
                 Log.e("ORACULO_API", "STREAM ERROR: ${error.message}", error)
 
+                /*
+                 * Mostramos el mensaje también en el overlay propio.
+                 */
+                showOracleOverlayMessage(personalizedErrorMessage)
+
+                /*
+                 * Mantenemos detalle técnico en el contenido visible
+                 * del chat para debugging y trazabilidad.
+                 */
                 textAnswer.text = "$personalizedErrorMessage\n\nDetalle: ${error.message}"
             }
+
 
 
             if (streamResult.isFailure) {

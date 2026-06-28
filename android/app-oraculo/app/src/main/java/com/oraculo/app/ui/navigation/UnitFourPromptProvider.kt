@@ -204,7 +204,7 @@ object UnitFourPromptProvider {
                     children = listOf(
                         PromptNode("Disco duro HDD"),         // 9.1
                         PromptNode("Disco solido SSD"),       // 9.2
-                        PromptNode("Diferencias entre SSD y HDD") // 9.3
+                        PromptNode("Diferencias entre Disco Solido y Disco Duro") // 9.3
                     )
                 ),
 
