@@ -140,4 +140,43 @@ sealed class ChatUiItem {
          */
         val sourceLabels: List<String> = emptyList()
     ) : ChatUiItem()
+
+    /*
+     * Mensaje efímero de bienvenida.
+     *
+     * v1.6.4:
+     * - Usa el nombre guardado durante onboarding.
+     * - Se muestra visualmente en el chat activo.
+     * - NO se guarda en Room.
+     * - NO aparece en historial.
+     * - NO tiene copiar / like / dislike.
+     * - NO tiene request_id.
+     *
+     * Este item existe solo en la capa visual.
+     */
+    data class WelcomeMessage(
+        /*
+         * ID estable del mensaje visual.
+         *
+         * Ejemplo:
+         * welcome_session_123
+         */
+        val id: String,
+
+        /*
+         * Texto visible de bienvenida.
+         *
+         * Ejemplo:
+         * "Bienvenido, Álvaro. El oráculo vuelve a abrir los ojos."
+         */
+        val content: String,
+
+        /*
+         * Timestamp visual.
+         *
+         * No se usa para persistencia.
+         * Solo sirve si el adapter necesita una referencia temporal.
+         */
+        val timestamp: Long
+    ) : ChatUiItem()
 }

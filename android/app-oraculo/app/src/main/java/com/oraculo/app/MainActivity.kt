@@ -55,6 +55,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.oraculo.app.ui.chat.OracleWelcomeMessageProvider
+import com.oraculo.app.ui.chat.models.ChatUiItem
 
 class MainActivity : AppCompatActivity() {
 
@@ -108,12 +110,38 @@ class MainActivity : AppCompatActivity() {
     private var shouldAutoScrollChat: Boolean = true
 
     /*
+     * Texto efímero de bienvenida de la conversación activa.
+     *
+     * v1.6.4:
+     * - Se muestra visualmente en el chat.
+     * - NO se guarda en Room.
+     * - NO aparece en historial.
+     * - Se genera al iniciar app o al crear nuevo chat.
+     */
+    private var currentWelcomeMessageText: String? = null
+
+    /*
+     * Conversación para la que fue generada la bienvenida efímera actual.
+     *
+     * Esto evita reutilizar una bienvenida antigua en otra conversación.
+     */
+    private var currentWelcomeMessageConversationId: String? = null
+
+    /*
      * Indica si el usuario está arrastrando manualmente el RecyclerView.
      */
     private var isUserTouchingChat: Boolean = false
 
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var promptTreeContainer: LinearLayout
+
+    /*
+     * Título superior del panel lateral.
+     *
+     * v1.6.4:
+     * Se personaliza con el nombre guardado durante onboarding.
+     */
+    private lateinit var drawerTitle: TextView
     private val expandedPromptNodes = mutableSetOf<String>()
     private var lastPromptClickTitle: String? = null
     private var lastPromptClickTime: Long = 0L
@@ -192,6 +220,15 @@ class MainActivity : AppCompatActivity() {
         val userId = userIdentityStore.getOrCreateUserId()
         Log.d("ORACLE_SESSION", "user_id generado: $userId")
 
+
+        /*
+         * Personalizamos el título del drawer con el nombre guardado.
+         *
+         * Si todavía no existe nombre válido, el provider aplicará fallback.
+         */
+        updateDrawerTitleWithUserName()
+
+
         chatDatabase = OracleChatDatabase.getInstance(this)
         chatLocalRepository = ChatLocalRepository(
             conversationDao = chatDatabase.conversationDao(),
@@ -204,6 +241,20 @@ class MainActivity : AppCompatActivity() {
         if (!restoredSessionId.isNullOrBlank()) {
             currentSessionId = restoredSessionId
             Log.d("ORACLE_SESSION", "session_id restaurado temporalmente: $restoredSessionId")
+
+            /*
+             * Si Android recreó la Activity y no tenemos todavía
+             * bienvenida efímera en memoria, la regeneramos.
+             *
+             * No se persiste en Room.
+             */
+            if (currentWelcomeMessageConversationId != restoredSessionId) {
+                prepareEphemeralWelcomeForConversation(restoredSessionId)
+            }
+
+            /*
+             * Seguimos observando la misma conversación activa.
+             */
             observeConversationInRecycler(restoredSessionId)
         } else {
             startNewConversationForAppLaunch()
@@ -286,6 +337,11 @@ class MainActivity : AppCompatActivity() {
         scrollAnswer = findViewById(R.id.scrollAnswer)
         recyclerChat = findViewById(R.id.recyclerChat)
         promptTreeContainer = findViewById(R.id.promptTreeContainer)
+        /*
+         * Título superior del drawer.
+         */
+        drawerTitle = findViewById(R.id.drawerTitle)
+
         buttonOpenDrawer = findViewById(R.id.buttonOpenDrawer)
         buttonOpenDrawerAura = findViewById(R.id.buttonOpenDrawerAura)
         buttonNewChat = findViewById(R.id.buttonNewChat)
@@ -302,6 +358,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupDynamicInputHint() {
         editQuestion.hint = OracleHintProvider.getRandomHint()
+    }
+
+    /*
+     * Actualiza el título superior del drawer con el nombre del usuario.
+     *
+     * Regla:
+     * - si existe nombre guardado, usamos título personalizado;
+     * - si no existe nombre válido, el provider aplica fallback interno.
+     *
+     * v1.6.4:
+     * Esto da función real al nombre introducido en onboarding
+     * también fuera del chat.
+     */
+    private fun updateDrawerTitleWithUserName() {
+        /*
+         * Recuperamos el nombre del usuario desde preferencias.
+         */
+        val userName = getPersonalizedUserNameOrNull()
+
+        /*
+         * Construimos el texto final usando el provider central.
+         */
+        drawerTitle.text = OracleWelcomeMessageProvider.getDrawerTitle(userName)
     }
 
     private fun showOnboarding() {
@@ -407,8 +486,22 @@ class MainActivity : AppCompatActivity() {
     private fun startNewConversationForAppLaunch() {
         lifecycleScope.launch {
             val newConversation = chatLocalRepository.createNewConversation()
+
             currentSessionId = newConversation.id
+
+            /*
+             * Generamos una bienvenida efímera para esta conversación.
+             *
+             * No se guarda en Room.
+             * Solo se mostrará visualmente en el chat activo.
+             */
+            prepareEphemeralWelcomeForConversation(newConversation.id)
+
+            /*
+             * El chat activo empieza a observarse en RecyclerView.
+             */
             observeConversationInRecycler(newConversation.id)
+
             Log.d(
                 "ORACLE_SESSION",
                 "Nuevo session_id creado para este arranque: ${newConversation.id}"
@@ -419,17 +512,44 @@ class MainActivity : AppCompatActivity() {
     private fun startNewChatFromDrawer() {
         lifecycleScope.launch {
             val newConversation = chatLocalRepository.createNewConversation()
+
             currentSessionId = newConversation.id
+
+            /*
+             * Generamos bienvenida efímera para el nuevo chat.
+             *
+             * No se guarda en Room.
+             */
+            prepareEphemeralWelcomeForConversation(newConversation.id)
+
+            /*
+             * La nueva conversación activa pasa a mostrarse en RecyclerView.
+             */
             observeConversationInRecycler(newConversation.id)
+
+            /*
+             * Limpiamos estado visual legacy actual.
+             */
             textQuestion.text = "Pregunta: todavía no se ha enviado ninguna consulta."
             editQuestion.text.clear()
+
+            /*
+             * Dejamos el adapter vacío y en modo chat.
+             *
+             * La bienvenida efímera aparecerá mediante observeConversationInRecycler().
+             */
             chatAdapter.submitItems(emptyList())
             showChatRecyclerMode()
-            shouldAutoScrollChat = true
+
+            /*
+             * Limpiamos datos temporales de feedback de la última respuesta.
+             */
             lastAssistantRequestId = null
             lastAskedQuestion = null
             lastAssistantAnswer = null
+
             drawerLayout.closeDrawer(GravityCompat.START)
+
             Log.d(
                 "ORACLE_SESSION",
                 "Nuevo chat creado desde botón superior. session_id=${newConversation.id}"
@@ -477,6 +597,123 @@ class MainActivity : AppCompatActivity() {
         if (wasLoading) {
             setLoading(false)
         }
+    }
+
+    /*
+     * Devuelve el nombre guardado del usuario para personalización.
+     *
+     * IMPORTANTE:
+     * Ajusta esta línea si tu UserIdentityStore usa otro nombre de método.
+     *
+     * Lo normal sería algo como:
+     * - getUserName()
+     * - getSavedUserName()
+     * - readUserName()
+     *
+     * Si Android Studio marca error aquí,
+     * solo reemplaza la llamada interna por el método real de tu store.
+     */
+    private fun getPersonalizedUserNameOrNull(): String? {
+        return try {
+            /*
+             * Método esperado del store.
+             *
+             * Si tu implementación usa otro nombre,
+             * sustitúyelo aquí y no hará falta tocar nada más.
+             */
+            userIdentityStore.getUserName()
+        } catch (error: Exception) {
+            /*
+             * Fallback defensivo:
+             * si el método exacto difiere o falla,
+             * devolvemos null y el provider usará nombre por defecto.
+             */
+            null
+        }
+    }
+
+    /*
+     * Genera y memoriza la bienvenida efímera para una conversación concreta.
+     *
+     * Regla:
+     * - se llama cuando nace una conversación nueva
+     * - también puede llamarse al restaurar una conversación activa
+     * - NO guarda nada en Room
+     */
+    private fun prepareEphemeralWelcomeForConversation(
+        conversationId: String
+    ) {
+        /*
+         * Nombre del usuario guardado en onboarding.
+         */
+        val userName = getPersonalizedUserNameOrNull()
+
+        /*
+         * Generamos una frase aleatoria personalizada.
+         */
+        currentWelcomeMessageText =
+            OracleWelcomeMessageProvider.getRandomWelcomeMessage(userName)
+
+        /*
+         * Asociamos la bienvenida a esta conversación concreta.
+         */
+        currentWelcomeMessageConversationId = conversationId
+    }
+
+    /*
+     * Devuelve el item visual efímero de bienvenida
+     * para la conversación activa.
+     *
+     * Este item:
+     * - existe solo en memoria/UI
+     * - no se persiste
+     * - no se usa en historial
+     */
+    private fun buildEphemeralWelcomeUiItem(
+        conversationId: String
+    ): ChatUiItem.WelcomeMessage? {
+        /*
+         * La bienvenida solo se muestra en modo conversación activa.
+         */
+        if (isDisplayingReadOnlyConversation) {
+            return null
+        }
+
+        /*
+         * Debe existir una bienvenida preparada para esta conversación.
+         */
+        val welcomeText = currentWelcomeMessageText
+        val welcomeConversationId = currentWelcomeMessageConversationId
+
+        if (welcomeText.isNullOrBlank()) {
+            return null
+        }
+
+        if (welcomeConversationId != conversationId) {
+            return null
+        }
+
+        /*
+         * Creamos un id visual estable.
+         *
+         * Esto permite que el adapter lo trate como el mismo item
+         * entre múltiples emisiones del chat.
+         */
+        return ChatUiItem.WelcomeMessage(
+            id = "welcome_$conversationId",
+            content = welcomeText,
+            timestamp = System.currentTimeMillis()
+        )
+    }
+
+    /*
+     * Limpia la bienvenida efímera actual.
+     *
+     * Se usa si queremos resetear estado al abandonar o reemplazar conversación.
+     */
+    private fun clearEphemeralWelcome() {
+        currentWelcomeMessageText = null
+        currentWelcomeMessageConversationId = null
     }
 
     private fun switchDrawerBackground() {
@@ -632,8 +869,23 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+
+            /*
+             * Guardamos definitivamente el nombre del usuario.
+             */
             userIdentityStore.saveUserName(name)
+
+            /*
+             * Actualizamos en caliente el título del drawer
+             * para reflejar el nombre recién guardado.
+             */
+            updateDrawerTitleWithUserName()
+
+            /*
+             * Ocultamos onboarding y liberamos la app.
+             */
             hideOnboarding()
+
         }
     }
 
@@ -764,19 +1016,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun copyAssistantMessageToClipboard(text: String) {
+        /*
+         * Si no hay contenido real, no hacemos nada.
+         */
         if (text.isBlank()) return
 
+        /*
+         * Obtenemos el portapapeles del sistema.
+         */
         val clipboardManager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("Respuesta ORACLE", text)
+
+        /*
+         * Creamos el clip de texto plano.
+         */
+        val clip = ClipData.newPlainText(
+            "Respuesta ORACLE",
+            text
+        )
+
+        /*
+         * Copiamos la respuesta completa al portapapeles.
+         */
         clipboardManager.setPrimaryClip(clip)
 
+        /*
+         * Nombre del usuario para personalización visual.
+         */
+        val userName = getPersonalizedUserNameOrNull()
+
+        /*
+         * Mensaje de confirmación manteniendo el mismo estilo visual actual
+         * del aviso inferior, porque seguimos usando Toast.
+         */
         Toast.makeText(
             this,
-            "La genialidad está en la reinterpretación.",
+            OracleWelcomeMessageProvider.getCopyFeedbackMessage(userName),
             Toast.LENGTH_SHORT
         ).show()
 
-        Log.d("ORACLE_CHAT_UI", "Las réplicas nunca son tan brillantes como el original.")
+        /*
+         * Log de diagnóstico.
+         */
+        Log.d(
+            "ORACLE_CHAT_UI",
+            "Respuesta copiada correctamente al portapapeles."
+        )
     }
 
     private fun saveAssistantFeedbackLocally(
@@ -790,13 +1074,28 @@ class MainActivity : AppCompatActivity() {
                 useful = useful
             )
 
+            /*
+             * Nombre del usuario para personalización visual.
+             */
+            val userName = getPersonalizedUserNameOrNull()
+
+            /*
+             * Texto visual del aviso inferior según el feedback pulsado.
+             *
+             * Mantenemos Toast para conservar el estilo actual del panel
+             * mostrado en tus capturas.
+             */
             val localFeedbackText = if (useful) {
-                "Este es el impulso que necesitaba para crecer."
+                OracleWelcomeMessageProvider.getLikeFeedbackMessage(userName)
             } else {
-                "Esto no es mi destino, es mi advertencia."
+                OracleWelcomeMessageProvider.getDislikeFeedbackMessage(userName)
             }
 
-            Toast.makeText(this@MainActivity, localFeedbackText, Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this@MainActivity,
+                localFeedbackText,
+                Toast.LENGTH_SHORT
+            ).show()
 
             Log.d(
                 "ORACLE_FEEDBACK",
@@ -849,32 +1148,134 @@ class MainActivity : AppCompatActivity() {
         scrollAnswer.visibility = View.GONE
     }
 
+    /*
+      * Observa una conversación concreta desde Room y la dibuja
+      * en el RecyclerView como chat real.
+      *
+      * IMPORTANTE:
+      * - Esta función se usa para la conversación activa.
+      * - Cancela cualquier observación anterior.
+      * - Marca el estado visual como conversación editable.
+      *
+      * v1.6.4:
+      * - Añade una bienvenida efímera visual.
+      * - La bienvenida NO se guarda en Room.
+      * - La bienvenida NO aparece en historial.
+      */
     private fun observeConversationInRecycler(
         conversationId: String
     ) {
+        /*
+         * Cancelamos cualquier observador anterior para evitar
+         * múltiples collect simultáneos sobre conversaciones distintas.
+         */
         currentChatObserverJob?.cancel()
+
+        /*
+         * Guardamos qué conversación se está mostrando ahora.
+         */
         displayedConversationId = conversationId
+
+        /*
+         * Esta función representa el chat activo, no el historial.
+         */
         isDisplayingReadOnlyConversation = false
+
+        /*
+         * El adapter vuelve a modo editable.
+         */
         chatAdapter.setReadOnlyMode(false)
 
+        /*
+         * Empezamos a observar los mensajes persistidos de Room.
+         */
         currentChatObserverJob = lifecycleScope.launch {
             chatLocalRepository.observeMessages(conversationId).collectLatest { messages ->
-                val uiItems = ChatUiMapper.mapMessagesToUiItems(messages)
-                chatAdapter.submitItems(uiItems)
+
+                /*
+                 * Convertimos los mensajes reales de Room
+                 * a su representación visual base.
+                 *
+                 * Ejemplo:
+                 * - cabecera de fecha
+                 * - mensaje de usuario
+                 * - mensaje del asistente
+                 */
+                val mappedItems = ChatUiMapper.mapMessagesToUiItems(messages)
+
+                /*
+                 * Construimos la lista visual final que verá el RecyclerView.
+                 *
+                 * Esta lista puede incluir:
+                 * - bienvenida efímera
+                 * - mensajes reales del chat
+                 */
+                val finalUiItems = mutableListOf<ChatUiItem>()
+
+                /*
+                 * Obtenemos la bienvenida efímera para esta conversación,
+                 * si corresponde.
+                 *
+                 * IMPORTANTE:
+                 * - no viene de Room
+                 * - no se guarda en historial
+                 * - solo existe en la UI del chat activo
+                 */
+                val welcomeItem = buildEphemeralWelcomeUiItem(conversationId)
+
+                /*
+                 * Si existe una bienvenida efímera válida,
+                 * la insertamos primero.
+                 */
+                if (welcomeItem != null) {
+                    finalUiItems.add(welcomeItem)
+                }
+
+                /*
+                 * Añadimos después los mensajes reales persistidos.
+                 */
+                finalUiItems.addAll(mappedItems)
+
+                /*
+                 * Enviamos la lista visual final al adapter.
+                 */
+                chatAdapter.submitItems(finalUiItems)
+
+                /*
+                 * Aseguramos que el modo chat visual quede activo.
+                 */
                 showChatRecyclerMode()
 
-                if (uiItems.isNotEmpty() && shouldAutoScrollChat) {
+                /*
+                 * Auto-scroll durante streaming.
+                 *
+                 * Regla:
+                 * - si shouldAutoScrollChat está activo, seguimos el final;
+                 * - si el usuario sube manualmente, el listener lo desactiva;
+                 * - si el usuario vuelve al final, el listener lo reactiva.
+                 */
+                if (finalUiItems.isNotEmpty() && shouldAutoScrollChat) {
                     recyclerChat.post {
-                        recyclerChat.scrollToPosition(uiItems.lastIndex)
+                        /*
+                         * Bajamos al último bloque visual disponible.
+                         */
+                        recyclerChat.scrollToPosition(finalUiItems.lastIndex)
+
+                        /*
+                         * Segundo ajuste para pegarse al fondo real.
+                         */
                         recyclerChat.post {
                             scrollRecyclerChatToRealBottom()
                         }
                     }
                 }
 
+                /*
+                 * Log de diagnóstico.
+                 */
                 Log.d(
                     "ORACLE_CHAT_UI",
-                    "Recycler actualizado conversation_id=$conversationId items=${uiItems.size} autoScroll=$shouldAutoScrollChat"
+                    "Recycler actualizado conversation_id=$conversationId items=${finalUiItems.size} autoScroll=$shouldAutoScrollChat"
                 )
             }
         }
@@ -957,25 +1358,97 @@ class MainActivity : AppCompatActivity() {
 
     private fun openConversationReadOnly(conversation: ChatConversation) {
         lifecycleScope.launch {
+            /*
+             * Cancelamos la observación del chat activo para evitar
+             * que una conversación antigua sea reemplazada visualmente
+             * por emisiones de otra conversación en curso.
+             */
             currentChatObserverJob?.cancel()
+
+            /*
+             * Cargamos una fotografía fija de los mensajes de la conversación.
+             *
+             * IMPORTANTE:
+             * - Esto se usa en modo lectura.
+             * - No estamos observando cambios en tiempo real con Flow.
+             * - Solo abrimos el historial tal como está guardado en Room.
+             */
             val messages = chatLocalRepository.getMessagesOnce(conversation.id)
+
+            /*
+             * Marcamos qué conversación se está mostrando en pantalla.
+             *
+             * Esto permite saber que el usuario está visualizando
+             * una conversación histórica concreta.
+             */
             displayedConversationId = conversation.id
+
+            /*
+             * Activamos el modo solo lectura.
+             *
+             * En este modo el adapter puede desactivar o bloquear
+             * acciones que solo deben existir en la conversación activa.
+             */
             isDisplayingReadOnlyConversation = true
+
+            /*
+             * Indicamos al adapter que debe trabajar en modo lectura.
+             *
+             * Esto afecta principalmente a la interacción con botones
+             * como feedback o acciones de respuesta.
+             */
             chatAdapter.setReadOnlyMode(true)
+
+            /*
+             * Convertimos los mensajes persistidos de Room
+             * en elementos visuales que el RecyclerView puede pintar.
+             */
             val uiItems = ChatUiMapper.mapMessagesToUiItems(messages)
+
+            /*
+             * Enviamos al adapter la lista visual final del historial.
+             */
             chatAdapter.submitItems(uiItems)
+
+            /*
+             * Mostramos el RecyclerView como interfaz principal del chat.
+             *
+             * El modo legacy con ScrollView queda oculto.
+             */
             showChatRecyclerMode()
+
+            /*
+             * Si hay elementos en la conversación,
+             * desplazamos el RecyclerView al último item visible.
+             *
+             * Esto permite abrir el historial directamente
+             * en la parte final de la conversación.
+             */
             if (uiItems.isNotEmpty()) {
                 recyclerChat.scrollToPosition(uiItems.lastIndex)
             }
+
+            /*
+             * Mostramos en la cabecera superior que estamos viendo historial
+             * y no la conversación activa actual.
+             */
             textQuestion.text = "Historial: ${conversation.title}"
+
+            /*
+             * Cerramos el drawer una vez abierta la conversación.
+             */
             drawerLayout.closeDrawer(GravityCompat.START)
+
+            /*
+             * Dejamos trazabilidad en Logcat para diagnóstico.
+             */
             Log.d(
                 "ORACLE_CHAT_DB",
                 "Conversación abierta en Recycler modo lectura: ${conversation.id}, mensajes=${messages.size}"
             )
         }
     }
+
 
     private fun renderPromptNode(node: PromptNode, level: Int) {
         val itemView = TextView(this)
@@ -1073,14 +1546,30 @@ class MainActivity : AppCompatActivity() {
     private fun sendQuestion() {
         val question = editQuestion.text.toString().trim()
 
+
         if (question.isBlank()) {
+            /*
+             * Recuperamos el nombre guardado durante onboarding.
+             *
+             * Si no existe nombre válido, el provider aplica fallback interno.
+             */
+            val userName = getPersonalizedUserNameOrNull()
+
+            /*
+             * Mensaje visual personalizado para pregunta vacía.
+             *
+             * Mantenemos Toast para conservar el mismo estilo visual
+             * inferior que ya muestra la app actualmente.
+             */
             Toast.makeText(
                 this,
-                "No hay respuestas correctas para preguntas equivocadas",
+                OracleWelcomeMessageProvider.getRandomEmptyQuestionMessage(userName),
                 Toast.LENGTH_SHORT
             ).show()
+
             return
         }
+
 
         showChatRecyclerMode()
 
@@ -1189,9 +1678,25 @@ class MainActivity : AppCompatActivity() {
             )
 
             streamResult.onFailure { error ->
+                /*
+                 * Nombre del usuario para personalización.
+                 */
+                val userName = getPersonalizedUserNameOrNull()
+
+                /*
+                 * Mensaje visual personalizado de error.
+                 *
+                 * Mantenemos detalle técnico al final porque sigue siendo útil
+                 * durante pruebas y debugging.
+                 */
+                val personalizedErrorMessage =
+                    OracleWelcomeMessageProvider.getRandomErrorMessage(userName)
+
                 Log.e("ORACULO_API", "STREAM ERROR: ${error.message}", error)
-                textAnswer.text = "Hoy el oráculo de Delfos guarda silencio.\n\nDetalle: ${error.message}"
+
+                textAnswer.text = "$personalizedErrorMessage\n\nDetalle: ${error.message}"
             }
+
 
             if (streamResult.isFailure) {
                 val errorText = textAnswer.text.toString()

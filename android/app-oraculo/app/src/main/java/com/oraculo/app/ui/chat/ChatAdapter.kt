@@ -53,6 +53,8 @@ class ChatAdapter(
         private const val VIEW_TYPE_DATE_HEADER = 1
         private const val VIEW_TYPE_USER_MESSAGE = 2
         private const val VIEW_TYPE_ASSISTANT_MESSAGE = 3
+
+        private const val VIEW_TYPE_WELCOME_MESSAGE = 4
     }
 
     fun submitItems(newItems: List<ChatUiItem>) {
@@ -165,16 +167,20 @@ class ChatAdapter(
     }
 
     /*
-     * Comprueba si dos elementos visuales representan el mismo item
-     * dentro del RecyclerView.
-     *
-     * No compara el contenido completo.
-     * Solo compara la identidad estable del item.
-     *
-     * Esto es importante porque durante el stream:
-     * - el contenido del AssistantMessage cambia
-     * - pero su id debe seguir siendo el mismo
-     */
+      * Comprueba si dos elementos visuales representan el mismo item
+      * dentro del RecyclerView.
+      *
+      * No compara el contenido completo.
+      * Solo compara la identidad estable del item.
+      *
+      * Esto es importante porque durante el stream:
+      * - el contenido del AssistantMessage cambia
+      * - pero su id debe seguir siendo el mismo
+      *
+      * v1.6.4:
+      * - También reconoce WelcomeMessage como item visual estable.
+      * - La bienvenida es efímera, no viene de Room.
+      */
     private fun hasSameVisualIdentity(
         oldItem: ChatUiItem,
         newItem: ChatUiItem
@@ -211,13 +217,25 @@ class ChatAdapter(
             }
 
             /*
-             * Un mensaje del asistente se identifica por su id local.
+             * Un mensaje del asistente se identifica por su id visual.
              *
              * Durante el stream este id debe mantenerse estable,
              * aunque el contenido crezca token a token.
              */
             oldItem is ChatUiItem.AssistantMessage &&
                     newItem is ChatUiItem.AssistantMessage -> {
+                oldItem.id == newItem.id
+            }
+
+            /*
+             * Mensaje efímero de bienvenida.
+             *
+             * No viene de Room, pero necesita identidad visual estable
+             * para que submitItems(...) no invalide toda la lista
+             * innecesariamente.
+             */
+            oldItem is ChatUiItem.WelcomeMessage &&
+                    newItem is ChatUiItem.WelcomeMessage -> {
                 oldItem.id == newItem.id
             }
 
@@ -251,6 +269,7 @@ class ChatAdapter(
             is ChatUiItem.DateHeader -> VIEW_TYPE_DATE_HEADER
             is ChatUiItem.UserMessage -> VIEW_TYPE_USER_MESSAGE
             is ChatUiItem.AssistantMessage -> VIEW_TYPE_ASSISTANT_MESSAGE
+            is ChatUiItem.WelcomeMessage -> VIEW_TYPE_WELCOME_MESSAGE
         }
     }
 
@@ -292,6 +311,12 @@ class ChatAdapter(
                     onDislikeAssistantMessage = onDislikeAssistantMessage
                 )
             }
+            VIEW_TYPE_WELCOME_MESSAGE -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_chat_assistant, parent, false)
+
+                WelcomeMessageViewHolder(view)
+            }
 
             else -> {
                 throw IllegalArgumentException("Tipo de vista desconocido: $viewType")
@@ -319,6 +344,12 @@ class ChatAdapter(
                     isReadOnlyMode = isReadOnlyMode
                 )
             }
+
+
+            is ChatUiItem.WelcomeMessage -> {
+                (holder as WelcomeMessageViewHolder).bind(item)
+            }
+
 
         }
     }
@@ -863,6 +894,64 @@ class ChatAdapter(
                      */
                 }
             }
+        }
+    }
+
+    /*
+     * ViewHolder para mensajes efímeros de bienvenida.
+     *
+     * v1.6.4:
+     * - Se pinta como burbuja de ORACLE.
+     * - No muestra copiar.
+     * - No muestra like.
+     * - No muestra dislike.
+     * - No muestra fuentes.
+     * - No se guarda en Room.
+     */
+    private class WelcomeMessageViewHolder(
+        itemView: View
+    ) : RecyclerView.ViewHolder(itemView) {
+
+        /*
+         * Texto principal de la burbuja.
+         */
+        private val textAssistantMessage: TextView =
+            itemView.findViewById(R.id.textAssistantMessage)
+
+        /*
+         * Contenedor de acciones del asistente.
+         *
+         * En bienvenida siempre va oculto.
+         */
+        private val assistantActionsContainer: View =
+            itemView.findViewById(R.id.assistantActionsContainer)
+
+        /*
+         * Texto de fuentes.
+         *
+         * En bienvenida siempre va oculto.
+         */
+        private val textAssistantSources: TextView =
+            itemView.findViewById(R.id.textAssistantSources)
+
+        fun bind(
+            item: ChatUiItem.WelcomeMessage
+        ) {
+            /*
+             * Mostramos el texto de bienvenida.
+             */
+            textAssistantMessage.text = item.content
+
+            /*
+             * La bienvenida no tiene acciones.
+             */
+            assistantActionsContainer.visibility = View.GONE
+
+            /*
+             * La bienvenida no tiene fuentes.
+             */
+            textAssistantSources.visibility = View.GONE
+            textAssistantSources.text = ""
         }
     }
 }
