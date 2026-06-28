@@ -274,14 +274,42 @@
         </LinearLayout>
 
         <!--
+            Lottie de carga adaptada exactamente al tamaño del composer.
+
+            IMPORTANTE:
+            - Es una vista hermana de composerContainer, no hija.
+            - Por eso NO altera el tamaño del input.
+            - Se ajusta a los 4 lados de composerContainer.
+            - Se rota 180º para invertir el efecto.
+            - Queda por detrás del composer porque está declarada antes.
+        -->
+        <com.airbnb.lottie.LottieAnimationView
+            android:id="@+id/lottieInputLoadingBar"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            android:elevation="32dp"
+            android:translationZ="32dp"
+            android:alpha="0.95"
+            android:rotation="180"
+            android:scaleType="fitXY"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            app:lottie_autoPlay="false"
+            app:lottie_loop="true"
+            app:lottie_fileName="panel_inferior_loading.json"
+            app:layout_constraintStart_toStartOf="@id/composerContainer"
+            app:layout_constraintEnd_toEndOf="@id/composerContainer"
+            app:layout_constraintTop_toTopOf="@id/composerContainer"
+            app:layout_constraintBottom_toBottomOf="@id/composerContainer" />
+
+
+        <!--
             Barra inferior de mensaje.
 
-            Se conserva:
-            - id composerContainer
-            - id editQuestion
-            - id buttonAsk
-
-            Esto evita romper MainActivity.kt.
+            Se restaura a LinearLayout para conservar el comportamiento
+            que ya te funcionaba correctamente antes.
         -->
         <LinearLayout
             android:id="@+id/composerContainer"
@@ -301,9 +329,9 @@
             <!--
                 Campo de texto.
 
-                Mantiene el mismo id editQuestion.
-                El hint puede seguir siendo reemplazado por OracleHintProvider.
+                Mantiene exactamente el mismo id editQuestion.
             -->
+
             <EditText
                 android:id="@+id/editQuestion"
                 android:layout_width="0dp"
@@ -326,11 +354,11 @@
                 android:textColor="#FFFFFF"
                 android:textColorHint="#7F8DAE" />
 
+
             <!--
                 Botón enviar.
 
-                Mantiene el mismo id buttonAsk.
-                MainActivity.kt sigue usando este id.
+                Mantiene exactamente el mismo id buttonAsk.
             -->
             <androidx.appcompat.widget.AppCompatButton
                 android:id="@+id/buttonAsk"

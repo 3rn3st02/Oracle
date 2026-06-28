@@ -72,6 +72,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editQuestion: EditText
     private lateinit var buttonAsk: Button
     private lateinit var progressBar: ProgressBar
+
+    /*
+ * Barra Lottie de carga situada sobre el borde superior
+ * del input de consultas.
+ *
+ * v1.6.3:
+ * Sustituye visualmente al ProgressBar circular clásico.
+ */
+    private lateinit var lottieInputLoadingBar: LottieAnimationView
     private lateinit var textQuestion: TextView
     private lateinit var textAnswer: TextView
     private lateinit var recyclerChat: RecyclerView
@@ -270,6 +279,8 @@ class MainActivity : AppCompatActivity() {
         editQuestion = findViewById(R.id.editQuestion)
         buttonAsk = findViewById(R.id.buttonAsk)
         progressBar = findViewById(R.id.progressBar)
+        //Nueva animacion de carga desde lottie
+        lottieInputLoadingBar = findViewById(R.id.lottieInputLoadingBar)
         textQuestion = findViewById(R.id.textQuestion)
         textAnswer = findViewById(R.id.textAnswer)
         scrollAnswer = findViewById(R.id.scrollAnswer)
@@ -1238,7 +1249,53 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setLoading(isLoading: Boolean) {
-        progressBar.visibility = if (isLoading) View.VISIBLE else View.GONE
+        /*
+         * ProgressBar circular legacy.
+         *
+         * v1.6.3:
+         * Ya no lo mostramos visualmente.
+         * Lo dejamos siempre oculto para no romper referencias existentes.
+         */
+        progressBar.visibility = View.GONE
+
+        /*
+         * Nueva barra Lottie de carga sobre el borde superior
+         * del input box.
+         */
+        if (isLoading) {
+            /*
+             * Mostramos la barra.
+             */
+            lottieInputLoadingBar.visibility = View.VISIBLE
+
+            /*
+             * Reiniciamos desde el inicio para que cada consulta
+             * arranque la animación de forma limpia.
+             */
+            lottieInputLoadingBar.progress = 0f
+
+            /*
+             * Reproducimos en loop mientras carga.
+             */
+            lottieInputLoadingBar.playAnimation()
+        } else {
+            /*
+             * Detenemos la animación para no consumir recursos
+             * cuando no hay carga activa.
+             */
+            lottieInputLoadingBar.cancelAnimation()
+
+            /*
+             * Ocultamos la barra.
+             */
+            lottieInputLoadingBar.visibility = View.GONE
+        }
+
+        /*
+         * Conservamos la lógica actual:
+         * - mientras carga, no se puede reenviar
+         * - mientras carga, no se edita el input
+         */
         buttonAsk.isEnabled = !isLoading
         editQuestion.isEnabled = !isLoading
     }
