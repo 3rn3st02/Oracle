@@ -1,14 +1,140 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="#243B63" />
-    <corners
-        android:topLeftRadius="18dp"
-        android:topRightRadius="18dp"
-        android:bottomLeftRadius="18dp"
-        android:bottomRightRadius="4dp" />
-    <padding
-        android:left="14dp"
-        android:top="10dp"
-        android:right="14dp"
-        android:bottom="10dp" />
-</shape>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Sombra exterior muy suave.
+
+        Da profundidad, pero en versión mate:
+        - menos contraste
+        - menos brillo
+        - más discreta
+    -->
+    <item
+        android:left="1dp"
+        android:top="2dp">
+
+        <shape android:shape="rectangle">
+
+            <!--
+                Sombra oscura suave.
+                No cambia la opacidad real de la burbuja.
+            -->
+            <solid android:color="#22000000" />
+
+            <!--
+                Bordes más amplios para que la burbuja respire mejor.
+            -->
+            <corners
+                android:topLeftRadius="22dp"
+                android:topRightRadius="22dp"
+                android:bottomLeftRadius="22dp"
+                android:bottomRightRadius="8dp" />
+
+        </shape>
+    </item>
+
+    <!--
+        Capa base del glass mate del usuario.
+
+        Se mantiene la opacidad del usuario:
+        #BF = 75%
+
+        No cambiamos la translucidez.
+    -->
+    <item>
+
+        <shape android:shape="rectangle">
+
+            <!--
+                Fondo principal translúcido del usuario.
+                Mantiene 75% de opacidad.
+            -->
+            <solid android:color="#BF243B63" />
+
+            <!--
+                Borde mate suave.
+
+                Menos brillante que antes para evitar aspecto plástico.
+                Sigue marcando el borde glass sin ser chillón.
+            -->
+            <stroke
+                android:width="1dp"
+                android:color="#66CFE3FF" />
+
+            <!--
+                Bordes más redondeados y amplios.
+            -->
+            <corners
+                android:topLeftRadius="22dp"
+                android:topRightRadius="22dp"
+                android:bottomLeftRadius="22dp"
+                android:bottomRightRadius="8dp" />
+
+        </shape>
+    </item>
+
+    <!--
+        Brillo superior mate.
+
+        Es más suave que el anterior:
+        - menos blanco
+        - menos intensidad
+        - aspecto más difuso
+    -->
+    <item>
+
+        <shape android:shape="rectangle">
+
+            <!--
+                Reflejo superior muy sutil.
+                No altera la opacidad base.
+            -->
+            <gradient
+                android:angle="270"
+                android:startColor="#22FFFFFF"
+                android:centerColor="#0AFFFFFF"
+                android:endColor="#00FFFFFF" />
+
+            <!--
+                Misma forma para cubrir toda la burbuja.
+            -->
+            <corners
+                android:topLeftRadius="22dp"
+                android:topRightRadius="22dp"
+                android:bottomLeftRadius="22dp"
+                android:bottomRightRadius="8dp" />
+
+        </shape>
+    </item>
+
+    <!--
+        Oscurecimiento inferior mate.
+
+        Da volumen muy suave sin endurecer el diseño.
+    -->
+    <item>
+
+        <shape android:shape="rectangle">
+
+            <!--
+                Sombra interna inferior reducida.
+            -->
+            <gradient
+                android:angle="90"
+                android:startColor="#14000000"
+                android:centerColor="#00000000"
+                android:endColor="#00000000" />
+
+            <!--
+                Misma forma completa.
+            -->
+            <corners
+                android:topLeftRadius="22dp"
+                android:topRightRadius="22dp"
+                android:bottomLeftRadius="22dp"
+                android:bottomRightRadius="8dp" />
+
+        </shape>
+    </item>
+
+</layer-list>
